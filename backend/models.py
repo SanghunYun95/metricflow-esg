@@ -29,7 +29,7 @@ class ESGMetric(Base):
     # Critical Constraint: Adding composite index architecture 
     # This index is specifically necessary to optimize the 50,000+ row JOIN & GROUP BY aggregations.
     __table_args__ = (
-        Index('ix_esg_company_ym', 'company_id', 'year_month'),
+        Index('ix_esg_company_ym', 'company_id', 'year_month', unique=True),
     )
 
 if __name__ == '__main__':
