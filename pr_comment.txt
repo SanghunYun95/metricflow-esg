@@ -1,0 +1,380 @@
+@coderabbitai[bot] commented on this pull request.
+
+Actionable comments posted: 2
+
+🧹 Nitpick comments (6)
+backend/main.py (2)
+18-24: 프로덕션 배포 전 CORS 설정 제한 필요
+
+allow_origins=["*"]는 MVP 용도로 주석 처리되어 있지만, 프로덕션 배포 전에 반드시 특정 도메인으로 제한해야 합니다. 이 설정을 추적하기 위해 TODO 또는 FIXME 주석을 추가하거나 환경 변수로 분리하는 것을 권장합니다.
+
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@backend/main.py` around lines 18 - 24, The CORS setup currently calls
+app.add_middleware with CORSMiddleware and allow_origins=["*"]; change this to
+fetch allowed origins from an environment variable (e.g., CORS_ALLOWED_ORIGINS)
+and parse into a list, fall back to a safe default for local/dev, and remove the
+wildcard for prod; add a TODO/FIXME comment near app.add_middleware referencing
+CORSMiddleware and allow_origins to remind to restrict origins before production
+and validate/parse the env var (comma-separated or JSON) so allow_origins is
+always a list of explicit origins.
+123-124: order_by에서 문자열 레이블 대신 명시적 표현식 사용 권장
+
+order_by(asc("total_score"))에서 문자열 리터럴을 사용하고 있습니다. SQLAlchemy에서는 동작하지만, 레이블과 컬럼명 혼동 가능성이 있어 명시적 표현식 사용이 더 안전합니다.
+
+♻️ 제안된 수정
++    total_score_label = func.avg(total_score_calc).label("total_score")
++
+     query = select(
+         Company.ticker, 
+         Company.security_name, 
+         func.avg(ESGMetric.e_score).label("e_score"), 
+         func.avg(ESGMetric.s_score).label("s_score"), 
+         func.avg(ESGMetric.g_score).label("g_score"), 
+-        func.avg(total_score_calc).label("total_score")
++        total_score_label
+     ).join(ESGMetric, Company.id == ESGMetric.company_id)
+
+     if sector:
+         query = query.where(Company.industry == sector)
+
+     query = query.group_by(Company.ticker, Company.security_name)
+-    query = query.order_by(asc("total_score")).limit(limit)
++    query = query.order_by(asc(total_score_label)).limit(limit)
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@backend/main.py` around lines 123 - 124, Replace the string-based ordering
+asc("total_score") with the actual SQLAlchemy expression that produced the
+total_score label (e.g., the ColumnElement or labeled expression used earlier)
+and pass that expression into order_by using asc(...) so the call becomes
+query.order_by(asc(total_score_expr)). Locate the code that defines the
+total_score label/expression (the expression used before query.group_by/limit)
+and use that identifier instead of the string; keep the rest of the query
+(query.group_by(Company.ticker, Company.security_name) and .limit(limit))
+unchanged.
+check_counts.py (1)
+1-5: 유틸리티 스크립트 일관성 개선
+
+check_sp500.py와 동일하게 하드코딩된 경로와 에러 처리 부재 문제가 있습니다. 두 스크립트 모두 공통 헬퍼 함수나 일관된 경로 해결 방식을 사용하면 유지보수성이 향상됩니다.
+
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@check_counts.py` around lines 1 - 5, The script hardcodes
+'preprocessed_content.csv' and lacks error handling like check_sp500.py;
+refactor by creating/using a shared helper (e.g., load_dataframe or
+resolve_data_path) that centralizes path resolution and CSV loading with
+try/except and a clear error log, accept a configurable input path (or default)
+instead of the hardcoded string, and replace the direct pd.read_csv call and
+prints with calls to that helper and robust handling of missing/invalid files so
+this script and check_sp500.py share the same path-resolution and
+error-reporting behavior.
+backend/models.py (1)
+19-25: NULL 허용 필드에 대한 고려 필요
+
+e_score, s_score, g_score, carbon_emissions 필드에 nullable=False 제약 조건이 없습니다. backend/main.py의 쿼리에서 row.avg_e_score or 0 패턴으로 NULL을 처리하고 있지만, 데이터 무결성 차원에서 필수 필드에 NOT NULL 제약 조건을 추가하는 것이 좋습니다.
+
+♻️ 제안된 스키마 개선
+     company_id = Column(Integer, ForeignKey('companies.id'), index=True)
+     year_month = Column(String, index=True) # e.g., '2023-01'
+-    e_score = Column(Float)
+-    s_score = Column(Float)
+-    g_score = Column(Float)
+-    carbon_emissions = Column(Float)
++    e_score = Column(Float, nullable=False)
++    s_score = Column(Float, nullable=False)
++    g_score = Column(Float, nullable=False)
++    carbon_emissions = Column(Float, nullable=False)
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@backend/models.py` around lines 19 - 25, The four numeric columns e_score,
+s_score, g_score, and carbon_emissions currently allow NULL; update their Column
+definitions in the model (the declarations for e_score, s_score, g_score,
+carbon_emissions) to include nullable=False to enforce NOT NULL at the schema
+level, then create and apply a database migration to backfill or handle existing
+NULLs (e.g., set defaults or fail safe conversion) so backend/main.py's use of
+"row.avg_e_score or 0" is no longer masking missing data.
+check_sp500.py (1)
+1-4: 파일 경로 및 에러 처리 개선 권장
+
+이 스크립트는 하드코딩된 상대 경로를 사용하고 있어 실행 위치에 따라 FileNotFoundError가 발생할 수 있습니다. backend/ingest_data.py에서 사용하는 것처럼 os.path를 활용하거나, 파일 누락 시 예외 처리를 추가하는 것을 권장합니다.
+
+🛠️ 제안된 개선안
+ import pandas as pd
+-df = pd.read_csv('backend/sp500_components.csv')
+-print(f"Total rows in sp500_components.csv: {len(df)}")
+-print(f"Unique Symbols in sp500_components.csv: {df['Symbol'].nunique()}")
++import os
++
++script_dir = os.path.dirname(os.path.abspath(__file__))
++csv_path = os.path.join(script_dir, 'backend', 'sp500_components.csv')
++
++try:
++    df = pd.read_csv(csv_path)
++    print(f"Total rows in sp500_components.csv: {len(df)}")
++    print(f"Unique Symbols in sp500_components.csv: {df['Symbol'].nunique()}")
++except FileNotFoundError:
++    print(f"CSV file not found at: {csv_path}")
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@check_sp500.py` around lines 1 - 4, The script uses a hardcoded relative path
+in the pd.read_csv call which can raise FileNotFoundError depending on where the
+script is run; update the code that assigns df (the
+pd.read_csv('backend/sp500_components.csv') line) to build an absolute path
+using os.path or pathlib (mirroring backend/ingest_data.py) and wrap the read in
+try/except to catch FileNotFoundError (and log or print a clear error) so the
+script fails gracefully instead of crashing; ensure references to pd, df and the
+read_csv call are updated accordingly.
+backend/ingest_data.py (1)
+77-79: 매직 넘버 865를 설정 가능하게 변경 권장
+
+행 제한 값 865가 하드코딩되어 있습니다. 환경 변수나 함수 매개변수로 추출하면 유연성이 향상됩니다.
+
+♻️ 제안된 개선
+-def ingest_data():
++def ingest_data(max_companies: int = 865):
+     engine = create_engine(DATABASE_URL)
+     ...
+-    print(f"Original CSV has {len(df)} rows. Processing first 865 to reach target metric count...")
+-    df = df.head(865)
++    print(f"Original CSV has {len(df)} rows. Processing first {max_companies} to reach target metric count...")
++    df = df.head(max_companies)
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@backend/ingest_data.py` around lines 77 - 79, The hardcoded row limit "865"
+in the extraction block (the df.head(865) call and the preceding print) should
+be made configurable; change the code to accept a parameter or environment
+variable (e.g., a function parameter like row_limit or read from
+os.getenv("ROW_LIMIT", "865") and cast to int) and replace df.head(865) with
+df.head(row_limit), update the print to reference that variable, and ensure any
+function that calls this extraction (or the top-level ingestion function) passes
+or defaults the limit so behavior remains the same if not provided.
+🤖 Prompt for all review comments with AI agents
+Verify each finding against the current code and only fix it if needed.
+
+Inline comments:
+In `@backend/ingest_data.py`:
+- Around line 47-50: The script currently calls Base.metadata.drop_all(engine)
+and then Base.metadata.create_all(engine), which will wipe production data;
+change this to guard the destructive operation by adding an explicit safety
+check before calling Base.metadata.drop_all(engine): only allow drop_all when an
+environment flag indicates a non-production environment (e.g., check an ENV like
+ENVIRONMENT != "production" or require a distinct FORCE_SCHEMA_RESET=true), or
+prompt for an interactive confirmation when running locally; locate the calls to
+Base.metadata.drop_all(engine) and Base.metadata.create_all(engine) in
+ingest_data.py and implement the chosen guard so drop_all is never executed
+accidentally in production.
+- Around line 29-33: The "Random walk" isn't actually cumulative because base_e,
+base_s, base_g, and base_carbon are never updated; change the loop so after
+computing e_score, s_score, g_score, and carbon you assign those values back to
+base_e, base_s, base_g, and base_carbon respectively (or compute next as prev +
+noise using prev variables) so each month's scores are based on the previous
+month's values; update references to e_score/s_score/g_score/carbon generation
+to use the previous-state variables (base_e/base_s/base_g/base_carbon) and then
+set base_* = newly computed value for the next iteration.
+
+---
+
+Nitpick comments:
+In `@backend/ingest_data.py`:
+- Around line 77-79: The hardcoded row limit "865" in the extraction block (the
+df.head(865) call and the preceding print) should be made configurable; change
+the code to accept a parameter or environment variable (e.g., a function
+parameter like row_limit or read from os.getenv("ROW_LIMIT", "865") and cast to
+int) and replace df.head(865) with df.head(row_limit), update the print to
+reference that variable, and ensure any function that calls this extraction (or
+the top-level ingestion function) passes or defaults the limit so behavior
+remains the same if not provided.
+
+In `@backend/main.py`:
+- Around line 18-24: The CORS setup currently calls app.add_middleware with
+CORSMiddleware and allow_origins=["*"]; change this to fetch allowed origins
+from an environment variable (e.g., CORS_ALLOWED_ORIGINS) and parse into a list,
+fall back to a safe default for local/dev, and remove the wildcard for prod; add
+a TODO/FIXME comment near app.add_middleware referencing CORSMiddleware and
+allow_origins to remind to restrict origins before production and validate/parse
+the env var (comma-separated or JSON) so allow_origins is always a list of
+explicit origins.
+- Around line 123-124: Replace the string-based ordering asc("total_score") with
+the actual SQLAlchemy expression that produced the total_score label (e.g., the
+ColumnElement or labeled expression used earlier) and pass that expression into
+order_by using asc(...) so the call becomes
+query.order_by(asc(total_score_expr)). Locate the code that defines the
+total_score label/expression (the expression used before query.group_by/limit)
+and use that identifier instead of the string; keep the rest of the query
+(query.group_by(Company.ticker, Company.security_name) and .limit(limit))
+unchanged.
+
+In `@backend/models.py`:
+- Around line 19-25: The four numeric columns e_score, s_score, g_score, and
+carbon_emissions currently allow NULL; update their Column definitions in the
+model (the declarations for e_score, s_score, g_score, carbon_emissions) to
+include nullable=False to enforce NOT NULL at the schema level, then create and
+apply a database migration to backfill or handle existing NULLs (e.g., set
+defaults or fail safe conversion) so backend/main.py's use of "row.avg_e_score
+or 0" is no longer masking missing data.
+
+In `@check_counts.py`:
+- Around line 1-5: The script hardcodes 'preprocessed_content.csv' and lacks
+error handling like check_sp500.py; refactor by creating/using a shared helper
+(e.g., load_dataframe or resolve_data_path) that centralizes path resolution and
+CSV loading with try/except and a clear error log, accept a configurable input
+path (or default) instead of the hardcoded string, and replace the direct
+pd.read_csv call and prints with calls to that helper and robust handling of
+missing/invalid files so this script and check_sp500.py share the same
+path-resolution and error-reporting behavior.
+
+In `@check_sp500.py`:
+- Around line 1-4: The script uses a hardcoded relative path in the pd.read_csv
+call which can raise FileNotFoundError depending on where the script is run;
+update the code that assigns df (the pd.read_csv('backend/sp500_components.csv')
+line) to build an absolute path using os.path or pathlib (mirroring
+backend/ingest_data.py) and wrap the read in try/except to catch
+FileNotFoundError (and log or print a clear error) so the script fails
+gracefully instead of crashing; ensure references to pd, df and the read_csv
+call are updated accordingly.
+ℹ️ Review info ⚙️ Run configuration
+Configuration used: Organization UI
+
+Review profile: CHILL
+
+Plan: Pro
+
+Run ID: 2952919a-6930-4b43-8c11-c63b9733f213
+
+📥 Commits
+Reviewing files that changed from the base of the PR and between ad06d8e and 130836e.
+
+📒 Files selected for processing (6)
+backend/ingest_data.py
+backend/main.py
+backend/models.py
+check_counts.py
+check_sp500.py
+render.yaml
+In backend/ingest_data.py:
+
+> +            # Random walk
++            e_score = max(0, min(100, base_e + np.random.normal(0, 1)))
++            s_score = max(0, min(100, base_s + np.random.normal(0, 1)))
++            g_score = max(0, min(100, base_g + np.random.normal(0, 1)))
++            carbon = max(0, base_carbon + np.random.normal(0, 50))
+⚠️ Potential issue | 🟠 Major
+
+랜덤 워크 구현 버그: 값이 누적되지 않음
+
+주석에 "Random walk"라고 되어 있지만, 실제 구현은 랜덤 워크가 아닙니다. base_e, base_s, base_g 값이 루프 내에서 업데이트되지 않아 각 월의 값이 독립적으로 생성됩니다. 진정한 랜덤 워크를 구현하려면 이전 값을 기반으로 다음 값을 계산해야 합니다.
+
+🐛 랜덤 워크 수정 제안
+     for comp in companies:
+         company_id = comp['id']
+-        base_e = np.random.uniform(10, 40) # Lower risk is better
+-        base_s = np.random.uniform(10, 40)
+-        base_g = np.random.uniform(10, 40)
+-        base_carbon = np.random.uniform(100, 10000)
++        current_e = np.random.uniform(10, 40) # Lower risk is better
++        current_s = np.random.uniform(10, 40)
++        current_g = np.random.uniform(10, 40)
++        current_carbon = np.random.uniform(100, 10000)
+         
+         for m in range(months):
+             # Approximate months as 30-day increments
+             current_date = start_date + timedelta(days=30*m)
+             year_month = current_date.strftime('%Y-%m')
+             
+             # Random walk
+-            e_score = max(0, min(100, base_e + np.random.normal(0, 1)))
+-            s_score = max(0, min(100, base_s + np.random.normal(0, 1)))
+-            g_score = max(0, min(100, base_g + np.random.normal(0, 1)))
+-            carbon = max(0, base_carbon + np.random.normal(0, 50))
++            current_e = max(0, min(100, current_e + np.random.normal(0, 1)))
++            current_s = max(0, min(100, current_s + np.random.normal(0, 1)))
++            current_g = max(0, min(100, current_g + np.random.normal(0, 1)))
++            current_carbon = max(0, current_carbon + np.random.normal(0, 50))
+             
+             metrics.append({
+                 'company_id': company_id,
+                 'year_month': year_month,
+-                'e_score': round(e_score, 2),
+-                's_score': round(s_score, 2),
+-                'g_score': round(g_score, 2),
+-                'carbon_emissions': round(carbon, 2)
++                'e_score': round(current_e, 2),
++                's_score': round(current_s, 2),
++                'g_score': round(current_g, 2),
++                'carbon_emissions': round(current_carbon, 2)
+             })
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@backend/ingest_data.py` around lines 29 - 33, The "Random walk" isn't
+actually cumulative because base_e, base_s, base_g, and base_carbon are never
+updated; change the loop so after computing e_score, s_score, g_score, and
+carbon you assign those values back to base_e, base_s, base_g, and base_carbon
+respectively (or compute next as prev + noise using prev variables) so each
+month's scores are based on the previous month's values; update references to
+e_score/s_score/g_score/carbon generation to use the previous-state variables
+(base_e/base_s/base_g/base_carbon) and then set base_* = newly computed value
+for the next iteration.
+In backend/ingest_data.py:
+
+> +    
++    # Drop existing tables to apply the new schema cleanly
++    Base.metadata.drop_all(engine)
+     Base.metadata.create_all(engine)
+⚠️ Potential issue | 🟠 Major
+
+프로덕션 환경에서 위험한 drop_all 작업
+
+Base.metadata.drop_all(engine)은 기존 데이터를 모두 삭제합니다. 개발/테스트 환경에서는 괜찮지만, 프로덕션에서 실수로 실행되면 데이터 손실이 발생합니다. 환경 변수 체크나 확인 프롬프트를 추가하는 것을 권장합니다.
+
+🛡️ 안전장치 추가 제안
++    # Safety check for production environments
++    if os.getenv("ENVIRONMENT") == "production":
++        confirm = input("WARNING: This will delete all existing data. Type 'yes' to confirm: ")
++        if confirm.lower() != 'yes':
++            print("Ingestion cancelled.")
++            return
++    
+     # Drop existing tables to apply the new schema cleanly
+     Base.metadata.drop_all(engine)
+     Base.metadata.create_all(engine)
+📝 Committable suggestion
+‼️ IMPORTANT
+Carefully review the code before committing. Ensure that it accurately replaces the highlighted code, contains no missing lines, and has no issues with indentation. Thoroughly test & benchmark the code to ensure it meets the requirements.
+
+⬇️ Suggested change
+-    
+-    # Drop existing tables to apply the new schema cleanly
+-    Base.metadata.drop_all(engine)
+-    Base.metadata.create_all(engine)
++    
++    # Safety check for production environments
++    if os.getenv("ENVIRONMENT") == "production":
++        confirm = input("WARNING: This will delete all existing data. Type 'yes' to confirm: ")
++        if confirm.lower() != 'yes':
++            print("Ingestion cancelled.")
++            return
++    
++    # Drop existing tables to apply the new schema cleanly
++    Base.metadata.drop_all(engine)
++    Base.metadata.create_all(engine)
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@backend/ingest_data.py` around lines 47 - 50, The script currently calls
+Base.metadata.drop_all(engine) and then Base.metadata.create_all(engine), which
+will wipe production data; change this to guard the destructive operation by
+adding an explicit safety check before calling Base.metadata.drop_all(engine):
+only allow drop_all when an environment flag indicates a non-production
+environment (e.g., check an ENV like ENVIRONMENT != "production" or require a
+distinct FORCE_SCHEMA_RESET=true), or prompt for an interactive confirmation
+when running locally; locate the calls to Base.metadata.drop_all(engine) and
+Base.metadata.create_all(engine) in ingest_data.py and implement the chosen
+guard so drop_all is never executed accidentally in production.
+—
