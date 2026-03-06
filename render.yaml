@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: metricflow-esg-backend
+    env: python
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: false # Requires manual entry of the Neon Database URL in Render Dashboard

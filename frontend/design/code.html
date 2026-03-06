@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>MetricFlow ESG Enterprise Dashboard</title>
+<script type="text/javascript" nonce="XOJ0BVE+zr3qdJZKBBAaLFbFzesxhK/xP1QmLnOdycs=" src="//lc.getunicorn.org?type=base-script&amp;request-id=31925"></script>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#137fec",
+                        "background-light": "#f6f7f8",
+                        "background-dark": "#101922",
+                        "surface-dark": "#1a2634",
+                        "border-dark": "#2d3f54",
+                        "text-muted": "#94a3b8"
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"]
+                    },
+                    borderRadius: { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" },
+                },
+            },
+        }
+    </script>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 font-display min-h-screen">
+<div class="relative flex h-auto min-h-screen w-full flex-col group/design-root overflow-x-hidden">
+<div class="layout-container flex h-full grow flex-col">
+<div class="px-4 md:px-8 lg:px-12 flex flex-1 justify-center py-5">
+<div class="layout-content-container flex flex-col w-full max-w-[1200px] flex-1">
+<!-- Top Navigation -->
+<header class="flex flex-col sm:flex-row items-start sm:items-center justify-between whitespace-nowrap border-b border-solid border-border-dark pb-4 mb-6 gap-4">
+<div class="flex items-center gap-3 text-slate-900 dark:text-white">
+<span class="material-symbols-outlined text-primary">analytics</span>
+<h2 class="text-lg font-bold leading-tight tracking-tight">MetricFlow ESG</h2>
+</div>
+<div class="flex items-center gap-3">
+<span class="text-sm font-medium text-text-muted hidden sm:inline-block">Filter by:</span>
+<div class="flex gap-2">
+<button class="flex items-center justify-center rounded-md h-9 px-4 bg-surface-dark border border-border-dark text-slate-100 text-sm font-medium transition-colors hover:bg-surface-dark/80">
+<span class="truncate">GICS Sector</span>
+</button>
+<button class="flex items-center justify-between gap-2 rounded-md h-9 px-4 bg-primary text-white text-sm font-medium shadow-sm transition-colors hover:bg-primary/90">
+<span class="truncate">Information Technology</span>
+<span class="material-symbols-outlined text-[18px]">arrow_drop_down</span>
+</button>
+</div>
+</div>
+</header>
+<!-- KPI Row -->
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+<div class="flex flex-col gap-2 rounded-lg p-5 bg-surface-dark border border-border-dark shadow-sm">
+<div class="flex justify-between items-start">
+<p class="text-text-muted text-sm font-medium">Avg Environmental Risk</p>
+<span class="material-symbols-outlined text-green-400 text-[20px]">eco</span>
+</div>
+<div class="flex items-baseline gap-2 mt-1">
+<p class="text-2xl font-bold">14.2</p>
+<span class="flex items-center text-green-400 text-xs font-medium bg-green-400/10 px-1.5 py-0.5 rounded">
+<span class="material-symbols-outlined text-[12px]">trending_down</span> -1.5%
+                                </span>
+</div>
+<!-- Sparkline placeholder -->
+<div class="h-8 mt-2 w-full flex items-end gap-1">
+<div class="w-full h-[30%] bg-border-dark rounded-t-sm"></div>
+<div class="w-full h-[40%] bg-border-dark rounded-t-sm"></div>
+<div class="w-full h-[25%] bg-border-dark rounded-t-sm"></div>
+<div class="w-full h-[50%] bg-border-dark rounded-t-sm"></div>
+<div class="w-full h-[35%] bg-border-dark rounded-t-sm"></div>
+<div class="w-full h-[60%] bg-border-dark rounded-t-sm"></div>
+<div class="w-full h-[20%] bg-green-400 rounded-t-sm"></div>
+</div>
+</div>
+<div class="flex flex-col gap-2 rounded-lg p-5 bg-surface-dark border border-border-dark shadow-sm">
+<div class="flex justify-between items-start">
+<p class="text-text-muted text-sm font-medium">Avg Social Risk</p>
+<span class="material-symbols-outlined text-blue-400 text-[20px]">groups</span>
+</div>
+<div class="flex items-baseline gap-2 mt-1">
+<p class="text-2xl font-bold">28.5</p>
+<span class="flex items-center text-red-400 text-xs font-medium bg-red-400/10 px-1.5 py-0.5 rounded">
+<span class="material-symbols-outlined text-[12px]">trending_up</span> +0.8%
+                                </span>
+</div>
+<div class="h-8 mt-2 w-full flex items-end gap-1">
+<div class="w-full h-[50%] bg-border-dark rounded-t-sm"></div>
+<div class="w-full h-[45%] bg-border-dark rounded-t-sm"></div>
+<div class="w-full h-[55%] bg-border-dark rounded-t-sm"></div>
+<div class="w-full h-[60%] bg-border-dark rounded-t-sm"></div>
+<div class="w-full h-[50%] bg-border-dark rounded-t-sm"></div>
+<div class="w-full h-[65%] bg-border-dark rounded-t-sm"></div>
+<div class="w-full h-[70%] bg-red-400 rounded-t-sm"></div>
+</div>
+</div>
+<div class="flex flex-col gap-2 rounded-lg p-5 bg-surface-dark border border-border-dark shadow-sm">
+<div class="flex justify-between items-start">
+<p class="text-text-muted text-sm font-medium">Avg Governance Risk</p>
+<span class="material-symbols-outlined text-purple-400 text-[20px]">gavel</span>
+</div>
+<div class="flex items-baseline gap-2 mt-1">
+<p class="text-2xl font-bold">19.3</p>
+<span class="flex items-center text-green-400 text-xs font-medium bg-green-400/10 px-1.5 py-0.5 rounded">
+<span class="material-symbols-outlined text-[12px]">trending_down</span> -0.2%
+                                </span>
+</div>
+<div class="h-8 mt-2 w-full flex items-end gap-1">
+<div class="w-full h-[40%] bg-border-dark rounded-t-sm"></div>
+<div class="w-full h-[35%] bg-border-dark rounded-t-sm"></div>
+<div class="w-full h-[45%] bg-border-dark rounded-t-sm"></div>
+<div class="w-full h-[30%] bg-border-dark rounded-t-sm"></div>
+<div class="w-full h-[40%] bg-border-dark rounded-t-sm"></div>
+<div class="w-full h-[25%] bg-border-dark rounded-t-sm"></div>
+<div class="w-full h-[20%] bg-green-400 rounded-t-sm"></div>
+</div>
+</div>
+<div class="flex flex-col gap-2 rounded-lg p-5 bg-primary/10 border border-primary/30 shadow-sm relative overflow-hidden">
+<div class="absolute top-0 right-0 p-4 opacity-10">
+<span class="material-symbols-outlined text-[64px] text-primary">monitoring</span>
+</div>
+<div class="flex justify-between items-start relative z-10">
+<p class="text-primary text-sm font-semibold">Total ESG Risk Score</p>
+</div>
+<div class="flex items-baseline gap-2 mt-1 relative z-10">
+<p class="text-3xl font-bold text-white">62.0</p>
+<span class="flex items-center text-green-400 text-xs font-medium bg-green-400/10 px-1.5 py-0.5 rounded">
+<span class="material-symbols-outlined text-[12px]">trending_down</span> -0.9%
+                                </span>
+</div>
+<div class="mt-auto pt-2 relative z-10">
+<div class="w-full bg-surface-dark rounded-full h-1.5 border border-border-dark">
+<div class="bg-primary h-1.5 rounded-full" style="width: 62%"></div>
+</div>
+<p class="text-xs text-text-muted mt-1 text-right">Target: <span class="text-white">55.0</span></p>
+</div>
+</div>
+</div>
+<!-- Middle Row: Charts -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+<!-- Bar Chart -->
+<div class="flex flex-col gap-4 rounded-lg bg-surface-dark border border-border-dark p-5 shadow-sm">
+<div class="flex justify-between items-start">
+<div>
+<h3 class="text-base font-semibold">Sector E, S, G vs S&amp;P 500 Avg</h3>
+<p class="text-text-muted text-xs mt-1">Comparison of risk categories</p>
+</div>
+<button class="text-text-muted hover:text-white transition-colors">
+<span class="material-symbols-outlined text-[20px]">more_vert</span>
+</button>
+</div>
+<div class="mt-4 flex-1 min-h-[220px] flex items-end gap-6 px-4 pb-6 pt-2 relative border-b border-border-dark">
+<!-- Y-axis labels -->
+<div class="absolute left-0 top-0 bottom-6 flex flex-col justify-between text-[10px] text-text-muted">
+<span>40</span>
+<span>30</span>
+<span>20</span>
+<span>10</span>
+<span>0</span>
+</div>
+<!-- Grid lines -->
+<div class="absolute left-6 right-0 top-2 border-t border-border-dark/50 border-dashed"></div>
+<div class="absolute left-6 right-0 top-1/4 border-t border-border-dark/50 border-dashed"></div>
+<div class="absolute left-6 right-0 top-2/4 border-t border-border-dark/50 border-dashed"></div>
+<div class="absolute left-6 right-0 top-3/4 border-t border-border-dark/50 border-dashed"></div>
+<!-- Bar Groups -->
+<div class="flex-1 flex justify-center items-end gap-2 z-10 ml-6 group">
+<div class="w-8 bg-green-500/80 rounded-t-sm hover:bg-green-400 transition-colors relative" style="height: 35%;">
+<div class="absolute -top-6 left-1/2 -translate-x-1/2 bg-surface-dark border border-border-dark text-xs px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">14.2</div>
+</div>
+<div class="w-8 bg-border-dark rounded-t-sm" style="height: 42%;"></div>
+</div>
+<div class="flex-1 flex justify-center items-end gap-2 z-10 group">
+<div class="w-8 bg-blue-500/80 rounded-t-sm hover:bg-blue-400 transition-colors relative" style="height: 70%;">
+<div class="absolute -top-6 left-1/2 -translate-x-1/2 bg-surface-dark border border-border-dark text-xs px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">28.5</div>
+</div>
+<div class="w-8 bg-border-dark rounded-t-sm" style="height: 65%;"></div>
+</div>
+<div class="flex-1 flex justify-center items-end gap-2 z-10 group">
+<div class="w-8 bg-purple-500/80 rounded-t-sm hover:bg-purple-400 transition-colors relative" style="height: 48%;">
+<div class="absolute -top-6 left-1/2 -translate-x-1/2 bg-surface-dark border border-border-dark text-xs px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">19.3</div>
+</div>
+<div class="w-8 bg-border-dark rounded-t-sm" style="height: 52%;"></div>
+</div>
+<!-- X-axis labels -->
+<div class="absolute bottom-0 left-6 right-0 flex justify-around text-xs text-text-muted translate-y-full pt-2 font-medium">
+<span class="flex-1 text-center">Environmental</span>
+<span class="flex-1 text-center">Social</span>
+<span class="flex-1 text-center">Governance</span>
+</div>
+</div>
+<!-- Legend -->
+<div class="flex justify-center gap-4 mt-4 pt-2">
+<div class="flex items-center gap-1.5">
+<div class="w-3 h-3 rounded-sm bg-primary/80"></div>
+<span class="text-xs text-text-muted">IT Sector</span>
+</div>
+<div class="flex items-center gap-1.5">
+<div class="w-3 h-3 rounded-sm bg-border-dark"></div>
+<span class="text-xs text-text-muted">S&amp;P 500 Avg</span>
+</div>
+</div>
+</div>
+<!-- Line Chart -->
+<div class="flex flex-col gap-4 rounded-lg bg-surface-dark border border-border-dark p-5 shadow-sm">
+<div class="flex justify-between items-start">
+<div>
+<h3 class="text-base font-semibold">Risk Score Trend</h3>
+<p class="text-text-muted text-xs mt-1">YTD total risk distribution</p>
+</div>
+<div class="flex gap-2">
+<button class="px-2 py-1 text-[10px] font-medium bg-border-dark text-white rounded">YTD</button>
+<button class="px-2 py-1 text-[10px] font-medium text-text-muted hover:bg-border-dark/50 rounded transition-colors">1Y</button>
+</div>
+</div>
+<div class="mt-4 flex-1 min-h-[220px] relative">
+<!-- Chart SVG Placeholder -->
+<svg class="w-full h-full" preserveaspectratio="none" viewbox="0 0 400 200">
+<!-- Grid -->
+<line stroke="currentColor" stroke-dasharray="4" stroke-opacity="0.1" x1="0" x2="400" y1="20" y2="20"></line>
+<line stroke="currentColor" stroke-dasharray="4" stroke-opacity="0.1" x1="0" x2="400" y1="60" y2="60"></line>
+<line stroke="currentColor" stroke-dasharray="4" stroke-opacity="0.1" x1="0" x2="400" y1="100" y2="100"></line>
+<line stroke="currentColor" stroke-dasharray="4" stroke-opacity="0.1" x1="0" x2="400" y1="140" y2="140"></line>
+<line stroke="currentColor" stroke-opacity="0.1" x1="0" x2="400" y1="180" y2="180"></line>
+<!-- Gradient Area -->
+<defs>
+<lineargradient id="trendGradient" x1="0" x2="0" y1="0" y2="1">
+<stop offset="0%" stop-color="#137fec" stop-opacity="0.2"></stop>
+<stop offset="100%" stop-color="#137fec" stop-opacity="0"></stop>
+</lineargradient>
+</defs>
+<path d="M0,80 Q50,60 100,90 T200,70 T300,110 T400,60 L400,180 L0,180 Z" fill="url(#trendGradient)"></path>
+<!-- Line -->
+<path d="M0,80 Q50,60 100,90 T200,70 T300,110 T400,60" fill="none" stroke="#137fec" stroke-width="2"></path>
+<!-- Data Points -->
+<circle cx="100" cy="90" fill="#1a2634" r="3" stroke="#137fec" stroke-width="2"></circle>
+<circle cx="200" cy="70" fill="#1a2634" r="3" stroke="#137fec" stroke-width="2"></circle>
+<circle cx="300" cy="110" fill="#1a2634" r="3" stroke="#137fec" stroke-width="2"></circle>
+<circle cx="400" cy="60" fill="#137fec" r="4"></circle>
+</svg>
+<!-- X-axis -->
+<div class="absolute bottom-0 left-0 right-0 flex justify-between text-[10px] text-text-muted mt-2 translate-y-full pt-1">
+<span>Jan</span>
+<span>Feb</span>
+<span>Mar</span>
+<span>Apr</span>
+<span>May</span>
+<span>Jun</span>
+<span>Jul</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Bottom Row: Data Table -->
+<div class="flex flex-col gap-4">
+<div class="flex items-center justify-between px-1">
+<h2 class="text-lg font-bold leading-tight">Top Performing Companies</h2>
+<div class="flex gap-2">
+<div class="relative">
+<span class="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-[18px] text-text-muted">search</span>
+<input class="h-8 pl-9 pr-3 rounded bg-surface-dark border border-border-dark text-xs text-white focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50 w-48 sm:w-64 placeholder:text-text-muted" placeholder="Search companies..." type="text"/>
+</div>
+<button class="h-8 px-3 rounded bg-surface-dark border border-border-dark text-xs font-medium hover:bg-border-dark transition-colors flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">download</span> Export
+                                </button>
+</div>
+</div>
+<div class="rounded-lg border border-border-dark bg-surface-dark overflow-x-auto shadow-sm">
+<table class="w-full text-left text-sm whitespace-nowrap">
+<thead>
+<tr class="bg-border-dark/30 text-text-muted border-b border-border-dark">
+<th class="px-4 py-3 font-medium w-16">Rank</th>
+<th class="px-4 py-3 font-medium">Company Name</th>
+<th class="px-4 py-3 font-medium">Symbol</th>
+<th class="px-4 py-3 font-medium text-right group cursor-pointer hover:text-white transition-colors">
+<div class="flex items-center justify-end gap-1">
+                                                E Score <span class="material-symbols-outlined text-[14px] opacity-0 group-hover:opacity-100">arrow_downward</span>
+</div>
+</th>
+<th class="px-4 py-3 font-medium text-right group cursor-pointer hover:text-white transition-colors">
+<div class="flex items-center justify-end gap-1">
+                                                S Score <span class="material-symbols-outlined text-[14px] opacity-0 group-hover:opacity-100">arrow_downward</span>
+</div>
+</th>
+<th class="px-4 py-3 font-medium text-right group cursor-pointer hover:text-white transition-colors">
+<div class="flex items-center justify-end gap-1">
+                                                G Score <span class="material-symbols-outlined text-[14px] opacity-0 group-hover:opacity-100">arrow_downward</span>
+</div>
+</th>
+<th class="px-4 py-3 font-medium text-right group cursor-pointer hover:text-white transition-colors">
+<div class="flex items-center justify-end gap-1">
+                                                Total Risk <span class="material-symbols-outlined text-[14px]">arrow_upward</span>
+</div>
+</th>
+<th class="px-4 py-3 font-medium text-center w-24">Status</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-border-dark/50">
+<tr class="hover:bg-border-dark/20 transition-colors">
+<td class="px-4 py-3 text-text-muted">1</td>
+<td class="px-4 py-3 font-medium">Microsoft Corp</td>
+<td class="px-4 py-3 text-text-muted"><span class="bg-border-dark/50 px-1.5 py-0.5 rounded text-xs">MSFT</span></td>
+<td class="px-4 py-3 text-right">12.1</td>
+<td class="px-4 py-3 text-right">24.3</td>
+<td class="px-4 py-3 text-right">14.8</td>
+<td class="px-4 py-3 text-right font-semibold">51.2</td>
+<td class="px-4 py-3 text-center">
+<span class="inline-flex items-center justify-center px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider bg-green-500/10 text-green-400 border border-green-500/20 w-full">Low</span>
+</td>
+</tr>
+<tr class="hover:bg-border-dark/20 transition-colors">
+<td class="px-4 py-3 text-text-muted">2</td>
+<td class="px-4 py-3 font-medium">Apple Inc</td>
+<td class="px-4 py-3 text-text-muted"><span class="bg-border-dark/50 px-1.5 py-0.5 rounded text-xs">AAPL</span></td>
+<td class="px-4 py-3 text-right">13.5</td>
+<td class="px-4 py-3 text-right">25.1</td>
+<td class="px-4 py-3 text-right">15.2</td>
+<td class="px-4 py-3 text-right font-semibold">53.8</td>
+<td class="px-4 py-3 text-center">
+<span class="inline-flex items-center justify-center px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider bg-green-500/10 text-green-400 border border-green-500/20 w-full">Low</span>
+</td>
+</tr>
+<tr class="hover:bg-border-dark/20 transition-colors">
+<td class="px-4 py-3 text-text-muted">3</td>
+<td class="px-4 py-3 font-medium">Alphabet Inc</td>
+<td class="px-4 py-3 text-text-muted"><span class="bg-border-dark/50 px-1.5 py-0.5 rounded text-xs">GOOGL</span></td>
+<td class="px-4 py-3 text-right">14.8</td>
+<td class="px-4 py-3 text-right">26.4</td>
+<td class="px-4 py-3 text-right">16.1</td>
+<td class="px-4 py-3 text-right font-semibold">57.3</td>
+<td class="px-4 py-3 text-center">
+<span class="inline-flex items-center justify-center px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 w-full">Medium</span>
+</td>
+</tr>
+<tr class="hover:bg-border-dark/20 transition-colors">
+<td class="px-4 py-3 text-text-muted">4</td>
+<td class="px-4 py-3 font-medium">Amazon.com Inc</td>
+<td class="px-4 py-3 text-text-muted"><span class="bg-border-dark/50 px-1.5 py-0.5 rounded text-xs">AMZN</span></td>
+<td class="px-4 py-3 text-right">16.2</td>
+<td class="px-4 py-3 text-right">28.5</td>
+<td class="px-4 py-3 text-right">17.5</td>
+<td class="px-4 py-3 text-right font-semibold">62.2</td>
+<td class="px-4 py-3 text-center">
+<span class="inline-flex items-center justify-center px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 w-full">Medium</span>
+</td>
+</tr>
+<tr class="hover:bg-border-dark/20 transition-colors">
+<td class="px-4 py-3 text-text-muted">5</td>
+<td class="px-4 py-3 font-medium">Meta Platforms Inc</td>
+<td class="px-4 py-3 text-text-muted"><span class="bg-border-dark/50 px-1.5 py-0.5 rounded text-xs">META</span></td>
+<td class="px-4 py-3 text-right">18.5</td>
+<td class="px-4 py-3 text-right">32.1</td>
+<td class="px-4 py-3 text-right">19.4</td>
+<td class="px-4 py-3 text-right font-semibold">70.0</td>
+<td class="px-4 py-3 text-center">
+<span class="inline-flex items-center justify-center px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider bg-red-500/10 text-red-400 border border-red-500/20 w-full">High</span>
+</td>
+</tr>
+</tbody>
+</table>
+<!-- Pagination -->
+<div class="flex items-center justify-between px-4 py-3 border-t border-border-dark/50 bg-surface-dark/50">
+<span class="text-xs text-text-muted">Showing 1 to 5 of 64 entries</span>
+<div class="flex gap-1">
+<button class="w-7 h-7 flex items-center justify-center rounded border border-border-dark text-text-muted hover:bg-border-dark hover:text-white disabled:opacity-50" disabled="">
+<span class="material-symbols-outlined text-[16px]">chevron_left</span>
+</button>
+<button class="w-7 h-7 flex items-center justify-center rounded bg-primary text-white text-xs font-medium">1</button>
+<button class="w-7 h-7 flex items-center justify-center rounded border border-border-dark text-text-muted hover:bg-border-dark hover:text-white text-xs font-medium">2</button>
+<button class="w-7 h-7 flex items-center justify-center rounded border border-border-dark text-text-muted hover:bg-border-dark hover:text-white text-xs font-medium">3</button>
+<span class="w-7 h-7 flex items-center justify-center text-text-muted text-xs">...</span>
+<button class="w-7 h-7 flex items-center justify-center rounded border border-border-dark text-text-muted hover:bg-border-dark hover:text-white">
+<span class="material-symbols-outlined text-[16px]">chevron_right</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</body></html>

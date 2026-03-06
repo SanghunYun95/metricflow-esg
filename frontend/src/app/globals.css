@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #137fec;
+  --color-background-light: #f6f7f8;
+  --color-background-dark: #101922;
+  --color-surface-dark: #1a2634;
+  --color-border-dark: #2d3f54;
+  --color-text-muted: #94a3b8;
+  --font-display: "Inter", sans-serif;
+}
+
+body {
+  @apply bg-background-light text-slate-900 font-display min-h-screen;
+}
+
+.dark body {
+  @apply bg-background-dark text-slate-100;
+}
