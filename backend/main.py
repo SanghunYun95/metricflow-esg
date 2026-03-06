@@ -17,7 +17,9 @@ app = FastAPI(title="MetricFlow ESG API", version="1.0.0")
 # Setup CORS to allow Next.js frontend to communicate
 # TODO: Restrict allowed origins before production. Currently uses env var or defaults.
 allow_origins_str = os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
-allow_origins = [origin.strip() for origin in allow_origins_str.split(",")]
+allow_origins = [origin.strip() for origin in allow_origins_str.split(",") if origin.strip()]
+if not allow_origins:
+    allow_origins = ["http://localhost:3000"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -111,6 +113,7 @@ def get_top_companies(
     Low score == better risk mitigation.
     """
     total_score_calc = (ESGMetric.e_score + ESGMetric.s_score + ESGMetric.g_score) / 3.0
+    total_score_label = func.avg(total_score_calc).label("total_score")
 
     query = select(
         Company.ticker, 

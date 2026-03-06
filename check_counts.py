@@ -1,13 +1,16 @@
-import os
-import pandas as pd
+import argparse
+from data_utils import load_dataframe
 
-script_dir = os.path.dirname(os.path.abspath(__file__))
-csv_path = os.path.join(script_dir, 'preprocessed_content.csv')
+def main(csv_path: str = 'preprocessed_content.csv'):
+    df = load_dataframe(csv_path)
+    if df is not None:
+        print(f"Total rows: {len(df)}")
+        print(f"Unique (ticker, filename): {len(df.drop_duplicates(subset=['ticker', 'filename']))}")
+        print(f"Unique tickers: {df['ticker'].nunique()}")
 
-try:
-    df = pd.read_csv(csv_path)
-    print(f"Total rows: {len(df)}")
-    print(f"Unique (ticker, filename): {len(df.drop_duplicates(subset=['ticker', 'filename']))}")
-    print(f"Unique tickers: {df['ticker'].nunique()}")
-except FileNotFoundError:
-    print(f"CSV file not found at: {csv_path}")
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Check row counts in ESG dataset")
+    parser.add_argument("--path", type=str, default='preprocessed_content.csv',
+                        help="Path to preprocessed content CSV file")
+    args = parser.parse_args()
+    main(args.path)

@@ -22,9 +22,9 @@ def generate_synthetic_data(companies, months=60):
         current_carbon = np.random.uniform(100, 10000)
         
         for m in range(months):
-            # Approximate months as 30-day increments
-            current_date = start_date + timedelta(days=30*m)
-            year_month = current_date.strftime('%Y-%m')
+            year = start_date.year + ((start_date.month - 1 + m) // 12)
+            month = ((start_date.month - 1 + m) % 12) + 1
+            year_month = f"{year:04d}-{month:02d}"
             
             # Cumulative Random walk
             current_e = max(0, min(100, current_e + np.random.normal(0, 1)))
@@ -42,15 +42,39 @@ def generate_synthetic_data(companies, months=60):
             })
     return metrics
 
-def ingest_data(max_companies: int = int(os.getenv("ROW_LIMIT", 865))):
+def _resolve_row_limit(default: int = 865) -> int:
+    try:
+        return int(os.getenv("ROW_LIMIT", str(default)))
+    except ValueError:
+        return default
+
+def ingest_data(max_companies: int | None = None):
+    if max_companies is None:
+        max_companies = _resolve_row_limit()
+        
     engine = create_engine(DATABASE_URL)
     
+    print("Loading preprocessed content...")
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)
+    
+    csv_path = os.path.join(project_root, 'preprocessed_content.csv')
+    try:
+        df = pd.read_csv(csv_path)
+    except FileNotFoundError:
+        print(f"preprocessed_content.csv not found at {csv_path}. Ingestion cancelled.")
+        return
+
     # Safety check for production environments
-    if os.getenv("ENVIRONMENT") == "production":
-        confirm = input("WARNING: This will delete all existing data. Type 'yes' to confirm: ")
-        if confirm.lower() != 'yes':
-            print("Ingestion cancelled.")
-            return
+    environment = os.getenv("ENVIRONMENT", "development").lower()
+    force_schema_reset = os.getenv("FORCE_SCHEMA_RESET", "false").lower() == "true"
+    
+    if environment == "production":
+        if not force_schema_reset:
+            confirm = input("WARNING: This will delete all existing data. Type 'yes' to confirm: ")
+            if confirm.lower() != 'yes':
+                print("Ingestion cancelled.")
+                return
 
     # Drop existing tables to apply the new schema cleanly
     Base.metadata.drop_all(engine)
@@ -58,13 +82,6 @@ def ingest_data(max_companies: int = int(os.getenv("ROW_LIMIT", 865))):
     
     Session = sessionmaker(bind=engine)
     session = Session()
-
-    print("Loading preprocessed content...")
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(script_dir)
-    
-    csv_path = os.path.join(project_root, 'preprocessed_content.csv')
-    df = pd.read_csv(csv_path)
 
     print("Loading S&P 500 components for mapping...")
     try:
@@ -121,7 +138,7 @@ def ingest_data(max_companies: int = int(os.getenv("ROW_LIMIT", 865))):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description="Ingest ESG Data")
-    parser.add_argument("--limit", type=int, default=int(os.getenv("ROW_LIMIT", 865)), 
+    parser.add_argument("--limit", type=int, default=_resolve_row_limit(), 
                         help="Number of companies to process")
     args = parser.parse_args()
     
