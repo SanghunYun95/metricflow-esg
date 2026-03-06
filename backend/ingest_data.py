@@ -1,60 +1,101 @@
 import os
 import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from models import Base, ESGReport
+from models import Base, Company, ESGMetric
 
 # Ensure DATABASE_URL is set or use a default local sqlite for testing
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./esg_data.db")
 
+def generate_synthetic_data(companies, months=60):
+    metrics = []
+    # Base date: e.g., 5 years starting Jan 2019
+    start_date = datetime(2019, 1, 1)
+    
+    for comp in companies:
+        company_id = comp['id']
+        base_e = np.random.uniform(10, 40) # Lower risk is better
+        base_s = np.random.uniform(10, 40)
+        base_g = np.random.uniform(10, 40)
+        base_carbon = np.random.uniform(100, 10000)
+        
+        for m in range(months):
+            # Approximate months as 30-day increments
+            current_date = start_date + timedelta(days=30*m)
+            year_month = current_date.strftime('%Y-%m')
+            
+            # Random walk
+            e_score = max(0, min(100, base_e + np.random.normal(0, 1)))
+            s_score = max(0, min(100, base_s + np.random.normal(0, 1)))
+            g_score = max(0, min(100, base_g + np.random.normal(0, 1)))
+            carbon = max(0, base_carbon + np.random.normal(0, 50))
+            
+            metrics.append({
+                'company_id': company_id,
+                'year_month': year_month,
+                'e_score': round(e_score, 2),
+                's_score': round(s_score, 2),
+                'g_score': round(g_score, 2),
+                'carbon_emissions': round(carbon, 2)
+            })
+    return metrics
+
 def ingest_data():
     engine = create_engine(DATABASE_URL)
+    
+    # Drop existing tables to apply the new schema cleanly
+    Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
+    
     Session = sessionmaker(bind=engine)
     session = Session()
 
     print("Loading preprocessed content...")
-    df = pd.read_csv('preprocessed_content.csv')
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)
     
-    # We don't need 'Unnamed: 0', 'preprocessed_content', 'ner_entities' for the DB table
-    cols_to_keep = ['filename', 'ticker', 'year', 'e_score', 's_score', 'g_score', 'total_score']
-    df = df[cols_to_keep]
+    csv_path = os.path.join(project_root, 'preprocessed_content.csv')
+    df = pd.read_csv(csv_path)
 
     print("Loading S&P 500 components for mapping...")
     try:
-        sp500_df = pd.read_csv('backend/sp500_components.csv')
-        # S&P 500 CSV usually has 'Symbol', 'Security', 'GICS Sector'
+        sp500_path = os.path.join(script_dir, 'sp500_components.csv')
+        sp500_df = pd.read_csv(sp500_path)
         sp500_mapping = sp500_df[['Symbol', 'Security', 'GICS Sector']].drop_duplicates()
-        
-        # Merge to add sector and security name
         df = df.merge(sp500_mapping, left_on='ticker', right_on='Symbol', how='left')
-        df.rename(columns={'Security': 'security_name', 'GICS Sector': 'gics_sector'}, inplace=True)
-        df.drop(columns=['Symbol'], inplace=True)
+        df.rename(columns={'Security': 'security_name', 'GICS Sector': 'industry'}, inplace=True)
     except FileNotFoundError:
-        print("sp500_components.csv not found. Proceeding with missing sector/name data.")
+        print(f"sp500_components.csv not found at {sp500_path}. Proceeding with missing sector/name data.")
         df['security_name'] = None
-        df['gics_sector'] = None
+        df['industry'] = None
 
-    # Handle NaN values
-    print("Handling NaNs...")
-    # Fill missing scores with 0 conceptually for this MVP, or drop them. 
-    # Let's drop rows where essential scores are missing to ensure data quality.
-    df.dropna(subset=['e_score', 's_score', 'g_score', 'total_score'], inplace=True)
-    
-    # For missing mapping data, we can fill with "Unknown"
     df['security_name'] = df['security_name'].fillna('Unknown')
-    df['gics_sector'] = df['gics_sector'].fillna('Unknown')
+    df['industry'] = df['industry'].fillna('Unknown')
 
-    print(f"Preparing to insert {len(df)} records into the database...")
+    # Extract Unique Companies
+    unique_companies_df = df[['ticker', 'security_name', 'industry']].drop_duplicates(subset=['ticker'])
     
-    # Convert DataFrame to list of dictionaries for bulk insert
-    records = df.to_dict(orient='records')
+    print(f"Preparing to insert {len(unique_companies_df)} companies into the database...")
+    company_records = unique_companies_df.to_dict(orient='records')
     
     try:
-        # Optimal way to bulk insert with SQLAlchemy
-        session.bulk_insert_mappings(ESGReport, records)
+        # Insert Companies and get IDs
+        companies_to_insert = [Company(**rec) for rec in company_records]
+        session.add_all(companies_to_insert)
+        session.flush() # Flush to populate auto-increment IDs
+        
+        inserted_companies = [{'id': c.id, 'ticker': c.ticker} for c in companies_to_insert]
+        
+        print(f"Generating synthetic time-series data for {len(inserted_companies)} companies (60 months each)...")
+        metric_records = generate_synthetic_data(inserted_companies, months=60)
+        
+        print(f"Preparing to bulk insert {len(metric_records)} ESG metric records into the database...")
+        session.bulk_insert_mappings(ESGMetric, metric_records)
+        
         session.commit()
-        print("Data ingestion completed successfully.")
+        print(f"Data ingestion completed successfully. Total Metrics: {len(metric_records)}")
     except Exception as e:
         session.rollback()
         print(f"Failed to ingest data. Error: {e}")

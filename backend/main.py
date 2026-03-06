@@ -1,11 +1,11 @@
 import os
 from fastapi import FastAPI, Depends, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import create_engine, select, func, desc
+from sqlalchemy import create_engine, select, func, desc, asc
 from sqlalchemy.orm import sessionmaker, Session
 from typing import List, Optional
 from pydantic import BaseModel
-from models import ESGReport, Base
+from models import Company, ESGMetric, Base
 
 # Setup Database Connection
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./esg_data.db")
@@ -51,10 +51,10 @@ class TopCompanyResponse(BaseModel):
 @app.get("/api/v1/sectors", response_model=List[str])
 def get_sectors(db: Session = Depends(get_db)):
     """
-    Returns a distinct list of GICS sectors from the database.
+    Returns a distinct list of GICS sectors (industries) from the companies table.
     """
-    sectors = db.scalars(select(ESGReport.gics_sector).distinct().where(ESGReport.gics_sector.is_not(None))).all()
-    # Filter out empty or "Unknown" if desired, but returning all found distinct values for now
+    sectors = db.scalars(select(Company.industry).distinct().where(Company.industry.is_not(None))).all()
+    # Filter out empty or "Unknown" if desired
     return [s for s in sectors if s and s != "Unknown"]
 
 
@@ -64,21 +64,24 @@ def get_esg_summary(
     db: Session = Depends(get_db)
 ):
     """
-    Returns average E, S, G scores grouped by sector.
+    Returns average E, S, G scores grouped by sector natively using SQL JOINs.
     Optimized to aggregate at the DB level, preventing OOM issues with large datasets.
     """
+    total_score_calc = (ESGMetric.e_score + ESGMetric.s_score + ESGMetric.g_score) / 3.0
+
     query = select(
-        ESGReport.gics_sector.label("sector"),
-        func.avg(ESGReport.e_score).label("avg_e_score"),
-        func.avg(ESGReport.s_score).label("avg_s_score"),
-        func.avg(ESGReport.g_score).label("avg_g_score"),
-        func.avg(ESGReport.total_score).label("avg_total_score"),
-    ).where(ESGReport.gics_sector.is_not(None), ESGReport.gics_sector != "Unknown")
+        Company.industry.label("sector"),
+        func.avg(ESGMetric.e_score).label("avg_e_score"),
+        func.avg(ESGMetric.s_score).label("avg_s_score"),
+        func.avg(ESGMetric.g_score).label("avg_g_score"),
+        func.avg(total_score_calc).label("avg_total_score"),
+    ).join(ESGMetric, Company.id == ESGMetric.company_id)\
+     .where(Company.industry.is_not(None), Company.industry != "Unknown")
 
     if sector:
-        query = query.where(ESGReport.gics_sector == sector)
+        query = query.where(Company.industry == sector)
 
-    query = query.group_by(ESGReport.gics_sector)
+    query = query.group_by(Company.industry)
     
     results = db.execute(query).all()
     
@@ -100,24 +103,25 @@ def get_top_companies(
     db: Session = Depends(get_db)
 ):
     """
-    Returns top companies with the lowest Total ESG Risk score.
-    Lowest risk == better score in this methodology.
+    Returns top companies with the lowest average Total ESG Risk score across the 60-month window.
+    Low score == better risk mitigation.
     """
+    total_score_calc = (ESGMetric.e_score + ESGMetric.s_score + ESGMetric.g_score) / 3.0
+
     query = select(
-        ESGReport.ticker, 
-        ESGReport.security_name, 
-        ESGReport.e_score, 
-        ESGReport.s_score, 
-        ESGReport.g_score, 
-        ESGReport.total_score
-    ).where(ESGReport.total_score.is_not(None))
+        Company.ticker, 
+        Company.security_name, 
+        func.avg(ESGMetric.e_score).label("e_score"), 
+        func.avg(ESGMetric.s_score).label("s_score"), 
+        func.avg(ESGMetric.g_score).label("g_score"), 
+        func.avg(total_score_calc).label("total_score")
+    ).join(ESGMetric, Company.id == ESGMetric.company_id)
 
     if sector:
-        query = query.where(ESGReport.gics_sector == sector)
+        query = query.where(Company.industry == sector)
 
-    # Calculate by taking the most recent year's score ideally, 
-    # but for this MVP aggregation, we will just order by lowest total_score directly.
-    query = query.order_by(ESGReport.total_score.asc()).limit(limit)
+    query = query.group_by(Company.ticker, Company.security_name)
+    query = query.order_by(asc("total_score")).limit(limit)
     
     results = db.execute(query).all()
     
