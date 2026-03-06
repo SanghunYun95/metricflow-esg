@@ -74,8 +74,17 @@ def ingest_data():
     df['security_name'] = df['security_name'].fillna('Unknown')
     df['industry'] = df['industry'].fillna('Unknown')
 
-    # Extract Unique Companies
-    unique_companies_df = df[['ticker', 'security_name', 'industry']].drop_duplicates(subset=['ticker'])
+    # Extract Companies (Target: ~865 companies to reach 51,900 metrics)
+    print(f"Original CSV has {len(df)} rows. Processing first 865 to reach target metric count...")
+    df = df.head(865)
+    
+    # Handle duplicate tickers for the unique constraint
+    # We'll use ticker + row index if duplicate exists to keep them unique
+    df['ticker_orig'] = df['ticker']
+    df['ticker'] = df.groupby('ticker').cumcount().astype(str)
+    df['ticker'] = df.apply(lambda x: x['ticker_orig'] if x['ticker'] == '0' else f"{x['ticker_orig']}-{x['ticker']}", axis=1)
+    
+    unique_companies_df = df[['ticker', 'security_name', 'industry']].copy()
     
     print(f"Preparing to insert {len(unique_companies_df)} companies into the database...")
     company_records = unique_companies_df.to_dict(orient='records')
@@ -91,7 +100,7 @@ def ingest_data():
         print(f"Generating synthetic time-series data for {len(inserted_companies)} companies (60 months each)...")
         metric_records = generate_synthetic_data(inserted_companies, months=60)
         
-        print(f"Preparing to bulk insert {len(metric_records)} ESG metric records into the database...")
+        print(f"Preparing to bulk insert {len(metric_records)} ESG metric records into the database (Total: {len(metric_records)})...")
         session.bulk_insert_mappings(ESGMetric, metric_records)
         
         session.commit()
