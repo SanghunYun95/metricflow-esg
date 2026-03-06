@@ -1,7 +1,13 @@
 # MetricFlow ESG Dashboard
 
+🔗 **Live Demo:** [https://metricflow-esg.vercel.app/](https://metricflow-esg.vercel.app/)
+
 ## 🇰🇷 프로젝트 소개 (Project Overview)
-이 프로젝트는 S&P 500 기업의 ESG 데이터를 분석하고 시각화하는 고성능 B2B 대시보드 시스템입니다. 대용량 데이터의 안정적인 처리와 사용자 경험 최적화에 중점을 두고 개발되었습니다.
+이 프로젝트는 S&P 500 기업의 ESG 데이터를 분석하고 시각화하는 대시보드입니다. 대용량 데이터의 안정적인 처리와 사용자 경험 최적화에 중점을 두고 개발되었습니다.
+
+### 📊 데이터 출처 (Data Source)
+- **기업 데이터:** [Kaggle - ESG Sustainability Reports of S&P 500 Companies](https://www.kaggle.com/datasets/jaidityachopra/esg-sustainability-reports-of-s-and-p-500-companies)
+- **시계열 데이터:** 51,900건의 ESG 지표 데이터는 테스트 및 성능 최적화 검증을 위해 목업(Mockup)으로 합성되었습니다.
 
 ### 🌟 주요 성과 (Key Achievements)
 
@@ -60,7 +66,11 @@ npm run dev
 ---
 
 ## 🇺🇸 Project Overview
-This project is a high-performance B2B dashboard system that analyzes and visualizes ESG data for S&P 500 companies. It balances robust large-scale data processing with an optimized user experience.
+This project is a dashboard that analyzes and visualizes ESG data for S&P 500 companies. It focuses on stable processing of large-scale data and optimizing the user experience.
+
+### 📊 Data Source
+- **Enterprise Data:** [Kaggle - ESG Sustainability Reports of S&P 500 Companies](https://www.kaggle.com/datasets/jaidityachopra/esg-sustainability-reports-of-s-and-p-500-companies)
+- **Time-Series Data:** 51,900 rows of ESG metrics were synthetically mocked for testing and performance optimization verification.
 
 ### 🌟 Key Achievements
 

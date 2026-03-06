@@ -19,10 +19,10 @@ class ESGMetric(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     company_id = Column(Integer, ForeignKey('companies.id'), index=True)
     year_month = Column(String, index=True) # e.g., '2023-01'
-    e_score = Column(Float)
-    s_score = Column(Float)
-    g_score = Column(Float)
-    carbon_emissions = Column(Float)
+    e_score = Column(Float, nullable=False)
+    s_score = Column(Float, nullable=False)
+    g_score = Column(Float, nullable=False)
+    carbon_emissions = Column(Float, nullable=False)
 
     company = relationship("Company", back_populates="metrics")
     

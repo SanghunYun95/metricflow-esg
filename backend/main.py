@@ -15,9 +15,13 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 app = FastAPI(title="MetricFlow ESG API", version="1.0.0")
 
 # Setup CORS to allow Next.js frontend to communicate
+# TODO: Restrict allowed origins before production. Currently uses env var or defaults.
+allow_origins_str = os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
+allow_origins = [origin.strip() for origin in allow_origins_str.split(",")]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # For MVP purposes. Restrict in production.
+    allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -114,14 +118,14 @@ def get_top_companies(
         func.avg(ESGMetric.e_score).label("e_score"), 
         func.avg(ESGMetric.s_score).label("s_score"), 
         func.avg(ESGMetric.g_score).label("g_score"), 
-        func.avg(total_score_calc).label("total_score")
+        total_score_label
     ).join(ESGMetric, Company.id == ESGMetric.company_id)
 
     if sector:
         query = query.where(Company.industry == sector)
 
     query = query.group_by(Company.ticker, Company.security_name)
-    query = query.order_by(asc("total_score")).limit(limit)
+    query = query.order_by(asc(total_score_label)).limit(limit)
     
     results = db.execute(query).all()
     

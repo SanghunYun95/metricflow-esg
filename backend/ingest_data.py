@@ -16,35 +16,42 @@ def generate_synthetic_data(companies, months=60):
     
     for comp in companies:
         company_id = comp['id']
-        base_e = np.random.uniform(10, 40) # Lower risk is better
-        base_s = np.random.uniform(10, 40)
-        base_g = np.random.uniform(10, 40)
-        base_carbon = np.random.uniform(100, 10000)
+        current_e = np.random.uniform(10, 40) # Lower risk is better
+        current_s = np.random.uniform(10, 40)
+        current_g = np.random.uniform(10, 40)
+        current_carbon = np.random.uniform(100, 10000)
         
         for m in range(months):
             # Approximate months as 30-day increments
             current_date = start_date + timedelta(days=30*m)
             year_month = current_date.strftime('%Y-%m')
             
-            # Random walk
-            e_score = max(0, min(100, base_e + np.random.normal(0, 1)))
-            s_score = max(0, min(100, base_s + np.random.normal(0, 1)))
-            g_score = max(0, min(100, base_g + np.random.normal(0, 1)))
-            carbon = max(0, base_carbon + np.random.normal(0, 50))
+            # Cumulative Random walk
+            current_e = max(0, min(100, current_e + np.random.normal(0, 1)))
+            current_s = max(0, min(100, current_s + np.random.normal(0, 1)))
+            current_g = max(0, min(100, current_g + np.random.normal(0, 1)))
+            current_carbon = max(0, current_carbon + np.random.normal(0, 50))
             
             metrics.append({
                 'company_id': company_id,
                 'year_month': year_month,
-                'e_score': round(e_score, 2),
-                's_score': round(s_score, 2),
-                'g_score': round(g_score, 2),
-                'carbon_emissions': round(carbon, 2)
+                'e_score': round(current_e, 2),
+                's_score': round(current_s, 2),
+                'g_score': round(current_g, 2),
+                'carbon_emissions': round(current_carbon, 2)
             })
     return metrics
 
-def ingest_data():
+def ingest_data(max_companies: int = int(os.getenv("ROW_LIMIT", 865))):
     engine = create_engine(DATABASE_URL)
     
+    # Safety check for production environments
+    if os.getenv("ENVIRONMENT") == "production":
+        confirm = input("WARNING: This will delete all existing data. Type 'yes' to confirm: ")
+        if confirm.lower() != 'yes':
+            print("Ingestion cancelled.")
+            return
+
     # Drop existing tables to apply the new schema cleanly
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
@@ -74,9 +81,9 @@ def ingest_data():
     df['security_name'] = df['security_name'].fillna('Unknown')
     df['industry'] = df['industry'].fillna('Unknown')
 
-    # Extract Companies (Target: ~865 companies to reach 51,900 metrics)
-    print(f"Original CSV has {len(df)} rows. Processing first 865 to reach target metric count...")
-    df = df.head(865)
+    # Extract Companies (Target: max_companies companies)
+    print(f"Original CSV has {len(df)} rows. Processing first {max_companies} to reach target metric count...")
+    df = df.head(max_companies)
     
     # Handle duplicate tickers for the unique constraint
     # We'll use ticker + row index if duplicate exists to keep them unique
@@ -112,4 +119,10 @@ def ingest_data():
         session.close()
 
 if __name__ == '__main__':
-    ingest_data()
+    import argparse
+    parser = argparse.ArgumentParser(description="Ingest ESG Data")
+    parser.add_argument("--limit", type=int, default=int(os.getenv("ROW_LIMIT", 865)), 
+                        help="Number of companies to process")
+    args = parser.parse_args()
+    
+    ingest_data(max_companies=args.limit)
