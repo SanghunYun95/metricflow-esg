@@ -5,9 +5,6 @@
 
 🔗 **Live Demo:** [https://metricflow-esg.vercel.app/](https://metricflow-esg.vercel.app/)
 
-> ⚠️ **안내사항 (Cold Start)**
-> 본 프로젝트의 백엔드 서버는 무료 클라우드 인스턴스에 배포되어 운영 중입니다. 일정 시간 요청이 없으면 서버가 휴면 상태로 전환되므로, **최초 접속 시 (Cold start) 백엔드 응답까지 약 1분 정도의 대기 시간이 발생**할 수 있습니다. 
-
 ## 🇰🇷 프로젝트 소개 (Project Overview)
 이 프로젝트는 S&P 500 기업의 ESG 데이터를 분석하고 시각화하는 대시보드입니다. 대용량 데이터의 안정적인 처리와 사용자 경험 최적화에 중점을 두고 개발되었습니다.
 
