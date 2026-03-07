@@ -153,7 +153,7 @@ def get_top_companies(
         query_sql += " ORDER BY total_score ASC LIMIT :limit"
         
         results = db.execute(text(query_sql), params).mappings().all()
-        print(f"[*] Cache Hit: Top companies served from Materialized View (Rows: {len(results)})")
+        logger.info(f"Cache Hit: Top companies served from Materialized View (Rows: {len(results)})")
         return [
             TopCompanyResponse(
                 ticker=row["ticker"],
@@ -166,7 +166,7 @@ def get_top_companies(
         ]
     except (ProgrammingError, OperationalError):
         db.rollback()
-        print("[!] Cache Miss: Finding top companies manually from 10,000,000+ rows...")
+        logger.warning("Cache Miss: Finding top companies manually from 10,000,000+ rows...")
         total_score_calc = (ESGMetric.e_score + ESGMetric.s_score + ESGMetric.g_score) / 3.0
         total_score_label = func.avg(total_score_calc).label("total_score")
 

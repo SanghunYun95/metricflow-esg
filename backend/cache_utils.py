@@ -1,6 +1,7 @@
 import logging
 from sqlalchemy import text
 from sqlalchemy.engine.base import Connection
+from sqlalchemy.exc import ProgrammingError, OperationalError
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +60,8 @@ def create_or_refresh_cache(conn: Connection, dialect: str, is_refresh: bool = F
                 conn.execute(text("REFRESH MATERIALIZED VIEW mv_esg_summary_sector"))
                 conn.execute(text("REFRESH MATERIALIZED VIEW mv_top_companies"))
                 logger.info("PostgreSQL Materialized Views refreshed successfully.")
-            except Exception as e:
-                logger.error(f"Failed to refresh Materialized Views. Assuming missing tables, attempting creation fallout: {e}")
+            except (ProgrammingError, OperationalError):
+                logger.exception("Failed to refresh Materialized Views. Assuming missing tables, attempting creation fallback.")
                 create_or_refresh_cache(conn, dialect, is_refresh=False)
         else:
             conn.execute(text("DROP MATERIALIZED VIEW IF EXISTS mv_esg_summary_sector"))

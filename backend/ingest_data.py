@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, text, func, insert
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import ProgrammingError, OperationalError
 from models import Base, Company, ESGMetric
+from cache_utils import create_or_refresh_cache
 
 # Ensure DATABASE_URL is set or use a default local sqlite for testing
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./esg_data.db")
@@ -162,7 +163,6 @@ def ingest_data(max_companies: int | None = None):
         
         try:
             with engine.connect() as conn:
-                from cache_utils import create_or_refresh_cache
                 create_or_refresh_cache(conn, dialect, is_refresh=False)
                 conn.commit()
                 print("Materialized Views successfully initialized!")

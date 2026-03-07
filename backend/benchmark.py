@@ -13,9 +13,9 @@ def generate_and_benchmark(db_url, num_companies, months=60):
     session = SessionLocal()
 
     total_rows = num_companies * months
-    print(f"\n=======================================================")
+    print("\n=======================================================")
     print(f"--- Benchmarking with {total_rows:,} rows ---")
-    print(f"=======================================================")
+    print("=======================================================")
     
     # 1. Generate companies
     companies = []
@@ -66,7 +66,7 @@ def generate_and_benchmark(db_url, num_companies, months=60):
     ).join(ESGMetric, Company.id == ESGMetric.company_id)\
      .group_by(Company.industry)
     
-    results1 = session.execute(query1).all()
+    session.execute(query1).all()
     query1_time = time.time() - start_time
     print(f"[*] Sector Aggregation Query (GROUP BY): {query1_time * 1000:.2f} ms")
 
@@ -80,7 +80,7 @@ def generate_and_benchmark(db_url, num_companies, months=60):
      .group_by(Company.ticker, Company.security_name)\
      .order_by(func.avg(total_score_calc).asc()).limit(10)
     
-    results2 = session.execute(query2).all()
+    session.execute(query2).all()
     query2_time = time.time() - start_time
     print(f"[*] Top 10 Companies Query (ORDER BY + LIMIT): {query2_time * 1000:.2f} ms")
 
