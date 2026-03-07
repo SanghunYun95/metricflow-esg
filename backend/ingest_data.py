@@ -97,21 +97,24 @@ def ingest_data(max_companies: int | None = None):
     df['industry'] = df['industry'].fillna('Unknown')
 
     # Extract Companies (Target: max_companies companies)
-    print(f"Original CSV has {len(df)} rows. Target: {max_companies} companies.")
+    # Handle duplicate tickers or duplicate dataset copying 
+    # if `max_companies` > len(df)
+    companies_data = []
+    original_len = len(df)
     
-    # Duplicate data if needed to reach target count for stress testing
-    if len(df) < max_companies:
-        print(f"Duplicating data to reach {max_companies} companies for stress test...")
-        repeats = (max_companies // len(df)) + 1
-        df = pd.concat([df] * repeats, ignore_index=True)
+    print(f"Original CSV has {original_len} rows. Target: {max_companies} companies.")
+    
+    for i in range(max_companies):
+        row_idx = i % original_len
+        row = df.iloc[row_idx].copy()
         
-    df = df.head(max_companies)
-    
-    # Handle duplicate tickers for the unique constraint
-    # We'll use ticker + row index if duplicate exists to keep them unique
-    df['ticker_orig'] = df['ticker']
-    df['ticker'] = df.groupby('ticker').cumcount().astype(str)
-    df['ticker'] = df.apply(lambda x: x['ticker_orig'] if x['ticker'] == '0' else f"{x['ticker_orig']}-{x['ticker']}", axis=1)
+        # Keep original ticker behavior, but ensure uniqueness if we duplicate
+        if i >= original_len:
+            row['ticker'] = f"{row['ticker']}-{i // original_len}"
+            
+        companies_data.append(row)
+        
+    df = pd.DataFrame(companies_data)
     
     unique_companies_df = df[['ticker', 'security_name', 'industry']].copy()
     
@@ -151,75 +154,16 @@ def ingest_data(max_companies: int | None = None):
         # Initialize Materialized Views for caching
         print("Initializing Materialized Views / Cache Tables for ultra-fast performance...")
         dialect = engine.dialect.name
-        with engine.connect() as conn:
-            from sqlalchemy import text
-            if dialect == "sqlite":
-                conn.execute(text("DROP TABLE IF EXISTS mv_esg_summary_sector"))
-                conn.execute(text("DROP TABLE IF EXISTS mv_top_companies"))
-                
-                sector_query = """
-                SELECT c.industry AS sector,
-                       AVG(m.e_score) AS avg_e_score,
-                       AVG(m.s_score) AS avg_s_score,
-                       AVG(m.g_score) AS avg_g_score,
-                       AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS avg_total_score
-                FROM companies c
-                JOIN esg_metrics m ON c.id = m.company_id
-                WHERE c.industry IS NOT NULL AND c.industry != 'Unknown'
-                GROUP BY c.industry
-                """
-                conn.execute(text(f"CREATE TABLE mv_esg_summary_sector AS {sector_query}"))
-                
-                top_comp_query = """
-                SELECT c.ticker, c.security_name, c.industry AS sector,
-                       AVG(m.e_score) AS e_score,
-                       AVG(m.s_score) AS s_score,
-                       AVG(m.g_score) AS g_score,
-                       AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS total_score
-                FROM companies c
-                JOIN esg_metrics m ON c.id = m.company_id
-                GROUP BY c.ticker, c.security_name, c.industry
-                """
-                conn.execute(text(f"CREATE TABLE mv_top_companies AS {top_comp_query}"))
-                
-                conn.execute(text("CREATE INDEX idx_mv_sector ON mv_esg_summary_sector(sector)"))
-                conn.execute(text("CREATE INDEX idx_mv_top_comp_total ON mv_top_companies(total_score)"))
-                conn.execute(text("CREATE INDEX idx_mv_top_comp_sector ON mv_top_companies(sector)"))
-            else:
-                conn.execute(text("DROP MATERIALIZED VIEW IF EXISTS mv_esg_summary_sector"))
-                conn.execute(text("DROP MATERIALIZED VIEW IF EXISTS mv_top_companies"))
-                
-                sector_query = """
-                SELECT c.industry AS sector,
-                       AVG(m.e_score) AS avg_e_score,
-                       AVG(m.s_score) AS avg_s_score,
-                       AVG(m.g_score) AS avg_g_score,
-                       AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS avg_total_score
-                FROM companies c
-                JOIN esg_metrics m ON c.id = m.company_id
-                WHERE c.industry IS NOT NULL AND c.industry != 'Unknown'
-                GROUP BY c.industry
-                """
-                conn.execute(text(f"CREATE MATERIALIZED VIEW mv_esg_summary_sector AS {sector_query}"))
-                
-                top_comp_query = """
-                SELECT c.ticker, c.security_name, c.industry AS sector,
-                       AVG(m.e_score) AS e_score,
-                       AVG(m.s_score) AS s_score,
-                       AVG(m.g_score) AS g_score,
-                       AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS total_score
-                FROM companies c
-                JOIN esg_metrics m ON c.id = m.company_id
-                GROUP BY c.ticker, c.security_name, c.industry
-                """
-                conn.execute(text(f"CREATE MATERIALIZED VIEW mv_top_companies AS {top_comp_query}"))
-                
-                conn.execute(text("CREATE UNIQUE INDEX idx_mv_sector ON mv_esg_summary_sector(sector)"))
-                conn.execute(text("CREATE UNIQUE INDEX idx_mv_top_comp_ticker ON mv_top_companies(ticker, security_name, sector)"))
-                conn.execute(text("CREATE INDEX idx_mv_top_comp_total ON mv_top_companies(total_score)"))
-                conn.execute(text("CREATE INDEX idx_mv_top_comp_sector ON mv_top_companies(sector)"))
-            conn.commit()
-            print("Materialized Views successfully initialized!")
+        
+        try:
+            with engine.connect() as conn:
+                from cache_utils import create_or_refresh_cache
+                create_or_refresh_cache(conn, dialect, is_refresh=False)
+                conn.commit()
+                print("Materialized Views successfully initialized!")
+        except Exception as e:
+            print(f"WARNING: Failed to initialize Materialized Views: {e}")
+            print("Data has been committed successfully, but the caching layer might be incomplete.")
     except Exception as e:
         session.rollback()
         print(f"Failed to ingest data. Error: {e}")

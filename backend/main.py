@@ -1,12 +1,18 @@
-import os
-from fastapi import FastAPI, Depends, Query, HTTPException
+from fastapi import FastAPI, Depends, Query, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, select, func, desc, asc, text
 from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.exc import ProgrammingError, OperationalError
+from sqlalchemy.exc import ProgrammingError, OperationalError, SQLAlchemyError
 from typing import List, Optional
 from pydantic import BaseModel
 from models import Company, ESGMetric, Base
+import logging
+import os
+from cache_utils import create_or_refresh_cache
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Setup Database Connection
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./esg_data.db")
@@ -83,19 +89,21 @@ def get_esg_summary(
             params["sector"] = sector
             
         results = db.execute(text(query_sql), params).mappings().all()
-        print(f"[*] Cache Hit: Sector summary served from Materialized View (Rows: {len(results)})")
-        return [
-            SectorSummaryResponse(
-                sector=row["sector"],
-                avg_e_score=round(row["avg_e_score"] or 0, 2),
-                avg_s_score=round(row["avg_s_score"] or 0, 2),
-                avg_g_score=round(row["avg_g_score"] or 0, 2),
-                avg_total_score=round(row["avg_total_score"] or 0, 2)
-            ) for row in results
-        ]
+        
+        if results:
+            logger.info(f"Cache Hit: Sector summary served from Materialized View (Rows: {len(results)})")
+            return [
+                SectorSummaryResponse(
+                    sector=row["sector"],
+                    avg_e_score=round(row["avg_e_score"] or 0, 2),
+                    avg_s_score=round(row["avg_s_score"] or 0, 2),
+                    avg_g_score=round(row["avg_g_score"] or 0, 2),
+                    avg_total_score=round(row["avg_total_score"] or 0, 2)
+                ) for row in results
+            ]
     except (ProgrammingError, OperationalError):
         db.rollback()
-        print("[!] Cache Miss: Computing sector summary manually from 10,000,000+ rows...")
+        logger.warning("Cache Miss: Computing sector summary manually from 10,000,000+ rows...")
         # 2. Schema not found error (View doesn't exist yet)
         total_score_calc = (ESGMetric.e_score + ESGMetric.s_score + ESGMetric.g_score) / 3.0
 
@@ -191,55 +199,35 @@ def get_top_companies(
             ) for row in results
         ]
 
+def get_admin_key(x_admin_key: str = Header(..., description="Administrator API Key")):
+    expected_key = os.getenv("ADMIN_API_KEY", "super-secret-admin-key")
+    if x_admin_key != expected_key:
+        raise HTTPException(status_code=403, detail="Invalid admin key")
+    return True
+
 @app.post("/api/v1/system/refresh-cache")
-def refresh_cache(db: Session = Depends(get_db)):
+def refresh_cache(
+    db: Session = Depends(get_db),
+    authorized: bool = Depends(get_admin_key)
+):
     """
     Refreshes the Materialized Views (PostgreSQL) or truncates/rebuilds tables (SQLite).
     This ensures that new incoming real-time data gets cached into the fast DB layer.
     """
-    dialect = db.bind.dialect.name
     try:
-        if dialect == "sqlite":
-            db.execute(text("DROP TABLE IF EXISTS mv_esg_summary_sector"))
-            db.execute(text("DROP TABLE IF EXISTS mv_top_companies"))
-            
-            sector_query = """
-            SELECT c.industry AS sector,
-                   AVG(m.e_score) AS avg_e_score,
-                   AVG(m.s_score) AS avg_s_score,
-                   AVG(m.g_score) AS avg_g_score,
-                   AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS avg_total_score
-            FROM companies c
-            JOIN esg_metrics m ON c.id = m.company_id
-            WHERE c.industry IS NOT NULL AND c.industry != 'Unknown'
-            GROUP BY c.industry
-            """
-            db.execute(text(f"CREATE TABLE mv_esg_summary_sector AS {sector_query}"))
-            
-            top_comp_query = """
-            SELECT c.ticker, c.security_name, c.industry AS sector,
-                   AVG(m.e_score) AS e_score,
-                   AVG(m.s_score) AS s_score,
-                   AVG(m.g_score) AS g_score,
-                   AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS total_score
-            FROM companies c
-            JOIN esg_metrics m ON c.id = m.company_id
-            GROUP BY c.ticker, c.security_name, c.industry
-            """
-            db.execute(text(f"CREATE TABLE mv_top_companies AS {top_comp_query}"))
-            
-            db.execute(text("CREATE INDEX idx_mv_sector ON mv_esg_summary_sector(sector)"))
-            db.execute(text("CREATE INDEX idx_mv_top_comp_total ON mv_top_companies(total_score)"))
-            db.execute(text("CREATE INDEX idx_mv_top_comp_sector ON mv_top_companies(sector)"))
-        else:
-            db.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_esg_summary_sector"))
-            db.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_top_companies"))
-            
+        # Pass raw DB connection to bypass session autocommit limitations 
+        con = db.connection()
+        dialect = db.bind.dialect.name
+        
+        create_or_refresh_cache(con, dialect, is_refresh=True)
         db.commit()
         return {"status": "success", "message": "Cache (Materialized Views) refreshed successfully."}
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error during refresh: {str(e)}") from e
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}") from e
 
 if __name__ == "__main__":
     import uvicorn
