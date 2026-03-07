@@ -28,15 +28,14 @@
 | **5만 건** (기존) | 1,213 ms | 56.28 ms | 17.69 ms | 현재 라이브 서비스 수준 |
 | **300만 건** | 2,136.82 ms | **12.29 ms** | **7.35 ms** | 10ms 이하의 쾌적한 속도 달성 |
 
-> 💡 **차세대 아키텍처: 구체화된 뷰 (Materialized View) 도입 전략**
-> 
-> 대규모 데이터를 매번 `JOIN`, `GROUP BY`로 집계하면 사용자가 늘어날수록 급격한 지연(Latency)이 발생합니다. 이를 극복하기 위해 비용이 드는 외부 인프라(Upstash Redis 등)를 추가하는 대신, 자체 데이터베이스 성능을 극대화하는 **구체화된 뷰(Materialized View)**를 아키텍처에 도입했습니다.
->
-> 1. **PostgreSQL (운영 및 권장 환경):**
->    DB에서 공식 지원하는 `MATERIALIZED VIEW` 문법을 활용합니다. 무거운 집계 결과를 디스크에 물리적인 테이블 형태로 저장하여, 쿼리 시 원본 테이블을 뒤지지 않고 이미 완성된 '단일 뷰 테이블'만 읽어오므로 수억 건의 데이터에서도 매우 빠른 조회 속도를 보장합니다.
-> 2. **SQLite (로컬 벤치마크 환경):**
-> **결과:** 300만 건의 대규모 트래픽 쿼리를 기존 수십 초 수준에서 **단 7ms(0.007초)**로 99.7% 단축하여 B2B 엔터프라이즈 환경에서도 지연 없는 초고속 대시보드를 성공적으로 구축했습니다.
+💡 **Materialized View 도입 전략**
+ 
+대규모 데이터를 매번 `JOIN`, `GROUP BY`로 집계하면 사용자가 늘어날수록 급격한 지연(Latency)이 발생합니다. 이를 극복하기 위해 비용이 드는 외부 인프라(Upstash Redis 등)를 추가하는 대신, 자체 데이터베이스 성능을 극대화하는 Materialized View를 아키텍처에 도입했습니다.
 
+1. **PostgreSQL (운영 및 권장 환경):**
+  DB에서 공식 지원하는 `MATERIALIZED VIEW` 문법을 활용합니다. 무거운 집계 결과를 디스크에 물리적인 테이블 형태로 저장하여, 쿼리 시 원본 테이블을 뒤지지 않고 이미 완성된 '단일 뷰 테이블'만 읽어오므로 수억 건의 데이터에서도 매우 빠른 조회 속도를 보장합니다.
+2. **SQLite (로컬 벤치마크 환경):**
+  **결과:** 300만 건의 대규모 트래픽 쿼리를 기존 수십 초 수준에서 단 7ms(0.007초)로 99.7% 단축하여 B2B 엔터프라이즈 환경에서도 지연 없는 초고속 대시보드를 성공적으로 구축했습니다.
 3. **사용자 경험(UX) 및 프론트엔드 렌더링 최적화**
    Next.js와 React-Query를 결합하여 데이터 패칭(Fetching) 상태를 관리하고, 불필요한 리렌더링을 억제하여 B2B 환경에 적합한 끊김 없는 대용량 데이터 시각화(Recharts) 대시보드와 모던한 Tailwind CSS 다크모드 UI를 구현함.
 
@@ -108,15 +107,14 @@ Tested performance limits of aggregation queries (GROUP BY, ORDER BY) in a local
 | **50k Rows** (Current) | 1,213 ms | 56.28 ms | 17.69 ms | Current Live Service Level |
 | **3M Rows** | 2,136.82 ms | **12.29 ms** | **7.35 ms** | Sub-10ms lightning-fast response achieved |
 
-> 💡 **Next-Gen Architecture: Materialized View Strategy**
-> 
-> Repeatedly running `JOIN` and `GROUP BY` aggregations on massive datasets causes severe latency as users increase. To overcome this without adding expensive external infrastructure (like Upstash Redis), we introduced **Materialized Views** into the architecture to maximize native database performance.
->
-> 1. **PostgreSQL (Production & Recommended):**
->    Utilizes the officially supported `MATERIALIZED VIEW` syntax. Heavy aggregation results are physically stored on disk as a table. Queries no longer scan the original tables, reading only the pre-computed 'single view table', guaranteeing extremely fast retrieval speeds even for hundreds of millions of rows.
-> 2. **SQLite (Local Benchmark Environment):**
-> **Result:** Large-scale 3M traffic queries were slashed by 99.7% from tens of seconds down to **just 7ms (0.007 sec)**, successfully building a zero-latency ultra-fast dashboard suitable for enterprise B2B environments.
+💡 **Materialized View Strategy**
+ 
+Repeatedly running `JOIN` and `GROUP BY` aggregations on massive datasets causes severe latency as users increase. To overcome this without adding expensive external infrastructure (like Upstash Redis), we introduced **Materialized Views** into the architecture to maximize native database performance.
 
+1. **PostgreSQL (Production & Recommended):**
+    Utilizes the officially supported `MATERIALIZED VIEW` syntax. Heavy aggregation results are physically stored on disk as a table. Queries no longer scan the original tables, reading only the pre-computed 'single view table', guaranteeing extremely fast retrieval speeds even for hundreds of millions of rows.
+2. **SQLite (Local Benchmark Environment):**
+  **Result:** Large-scale 3M traffic queries were slashed by 99.7% from tens of seconds down to just 7ms (0.007 sec), successfully building a zero-latency ultra-fast dashboard suitable for enterprise B2B environments.
 3. **User Experience (UX) & Frontend Rendering Optimization**
    Combined Next.js and React-Query to manage data fetching states and suppress unnecessary re-renders, delivering a seamless large-scale data visualization dashboard (Recharts) suitable for a B2B environment with a modern Tailwind CSS dark-mode UI.
 
