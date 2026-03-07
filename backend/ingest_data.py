@@ -2,31 +2,30 @@ import os
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text, func, insert
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.exc import ProgrammingError, OperationalError
 from models import Base, Company, ESGMetric
+from cache_utils import create_or_refresh_cache
 
 # Ensure DATABASE_URL is set or use a default local sqlite for testing
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./esg_data.db")
 
-def generate_synthetic_data(companies, months=60):
+def generate_synthetic_data_for_batch(companies: list, months: int = 60):
     metrics = []
-    # Base date: e.g., 5 years starting Jan 2019
-    start_date = datetime(2019, 1, 1)
-    
-    for comp in companies:
-        company_id = comp['id']
-        current_e = np.random.uniform(10, 40) # Lower risk is better
-        current_s = np.random.uniform(10, 40)
-        current_g = np.random.uniform(10, 40)
-        current_carbon = np.random.uniform(100, 10000)
+    for company in companies:
+        company_id = company['id']
+        # Initialize scores to be higher, as lower risk is better, so higher score is better
+        current_e, current_s, current_g = np.random.uniform(50, 90, 3) 
+        current_carbon = np.random.uniform(500, 5000)
         
-        for m in range(months):
-            year = start_date.year + ((start_date.month - 1 + m) // 12)
-            month = ((start_date.month - 1 + m) % 12) + 1
-            year_month = f"{year:04d}-{month:02d}"
+        for i in range(months):
+            # Calculate year and month (last 5 years)
+            year = 2024 - (months - 1 - i) // 12
+            month = 1 + (i % 12)
+            year_month = f"{year}-{month:02d}"
             
-            # Cumulative Random walk
+            # Subtle random walk for better looking data
             current_e = max(0, min(100, current_e + np.random.normal(0, 1)))
             current_s = max(0, min(100, current_s + np.random.normal(0, 1)))
             current_g = max(0, min(100, current_g + np.random.normal(0, 1)))
@@ -99,16 +98,36 @@ def ingest_data(max_companies: int | None = None):
     df['industry'] = df['industry'].fillna('Unknown')
 
     # Extract Companies (Target: max_companies companies)
-    print(f"Original CSV has {len(df)} rows. Processing first {max_companies} to reach target metric count...")
-    df = df.head(max_companies)
+    # Handle duplicate tickers or duplicate dataset copying 
+    # if `max_companies` > len(df)
+    companies_data = []
+    original_len = len(df)
     
-    # Handle duplicate tickers for the unique constraint
-    # We'll use ticker + row index if duplicate exists to keep them unique
-    df['ticker_orig'] = df['ticker']
-    df['ticker'] = df.groupby('ticker').cumcount().astype(str)
-    df['ticker'] = df.apply(lambda x: x['ticker_orig'] if x['ticker'] == '0' else f"{x['ticker_orig']}-{x['ticker']}", axis=1)
+    if original_len == 0:
+        print("No source rows found in preprocessed_content.csv. Ingestion cancelled.")
+        return
+        
+    print(f"Original CSV has {original_len} rows. Target: {max_companies} companies.")
     
-    unique_companies_df = df[['ticker', 'security_name', 'industry']].copy()
+    for i in range(max_companies):
+        row_idx = i % original_len
+        row = df.iloc[row_idx].copy()
+        
+        # Keep original ticker behavior, but ensure uniqueness if we duplicate
+        if i >= original_len:
+            row['ticker'] = f"{row['ticker']}-{i // original_len}"
+            
+        companies_data.append(row)
+        
+    df = pd.DataFrame(companies_data)
+    
+    # Ensure unique_companies_df is deduplicated by 'ticker'
+    # so we don't violate Company(ticker=...) unique constraint when iterating df records
+    unique_companies_df = (
+        df[['ticker', 'security_name', 'industry']]
+        .drop_duplicates(subset=['ticker'], keep='first')
+        .copy()
+    )
     
     print(f"Preparing to insert {len(unique_companies_df)} companies into the database...")
     company_records = unique_companies_df.to_dict(orient='records')
@@ -119,16 +138,37 @@ def ingest_data(max_companies: int | None = None):
         session.add_all(companies_to_insert)
         session.flush() # Flush to populate auto-increment IDs
         
-        inserted_companies = [{'id': c.id, 'ticker': c.ticker} for c in companies_to_insert]
+        inserted_companies = [c.id for c in companies_to_insert]
         
         print(f"Generating synthetic time-series data for {len(inserted_companies)} companies (60 months each)...")
-        metric_records = generate_synthetic_data(inserted_companies, months=60)
         
-        print(f"Preparing to bulk insert {len(metric_records)} ESG metric records into the database (Total: {len(metric_records)})...")
-        session.bulk_insert_mappings(ESGMetric, metric_records)
-        
+        # Batch generation and insertion to prevent MemoryError (Chunks of 1000 companies = 60000 records)
+        batch_size = 1000
+        total_metrics = 0
+        for i in range(0, len(inserted_companies), batch_size):
+            company_batch = [{'id': cid} for cid in inserted_companies[i:i+batch_size]]
+            metric_batch = generate_synthetic_data_for_batch(company_batch, months=60)
+            
+            # Print progress and insert using Core for max performance
+            print(f"[*] Inserting batch: {i//batch_size + 1}/{(len(inserted_companies) + batch_size - 1)//batch_size} ({len(metric_batch)} rows)...")
+            session.execute(insert(ESGMetric), metric_batch)
+            total_metrics += len(metric_batch)
+            
         session.commit()
-        print(f"Data ingestion completed successfully. Total Metrics: {len(metric_records)}")
+        print(f"Data ingestion completed successfully. Total Metrics: {total_metrics}")
+        
+        # Initialize Materialized Views for caching
+        print("Initializing Materialized Views / Cache Tables for ultra-fast performance...")
+        dialect = engine.dialect.name
+        
+        try:
+            with engine.connect() as conn:
+                create_or_refresh_cache(conn, dialect, is_refresh=False)
+                conn.commit()
+                print("Materialized Views successfully initialized!")
+        except Exception as e:
+            print(f"WARNING: Failed to initialize Materialized Views: {e}")
+            print("Data has been committed successfully, but the caching layer might be incomplete.")
     except Exception as e:
         session.rollback()
         print(f"Failed to ingest data. Error: {e}")
