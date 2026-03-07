@@ -102,6 +102,10 @@ def ingest_data(max_companies: int | None = None):
     companies_data = []
     original_len = len(df)
     
+    if original_len == 0:
+        print("No source rows found in preprocessed_content.csv. Ingestion cancelled.")
+        return
+        
     print(f"Original CSV has {original_len} rows. Target: {max_companies} companies.")
     
     for i in range(max_companies):
@@ -116,7 +120,13 @@ def ingest_data(max_companies: int | None = None):
         
     df = pd.DataFrame(companies_data)
     
-    unique_companies_df = df[['ticker', 'security_name', 'industry']].copy()
+    # Ensure unique_companies_df is deduplicated by 'ticker'
+    # so we don't violate Company(ticker=...) unique constraint when iterating df records
+    unique_companies_df = (
+        df[['ticker', 'security_name', 'industry']]
+        .drop_duplicates(subset=['ticker'], keep='first')
+        .copy()
+    )
     
     print(f"Preparing to insert {len(unique_companies_df)} companies into the database...")
     company_records = unique_companies_df.to_dict(orient='records')
@@ -142,11 +152,6 @@ def ingest_data(max_companies: int | None = None):
             print(f"[*] Inserting batch: {i//batch_size + 1}/{(len(inserted_companies) + batch_size - 1)//batch_size} ({len(metric_batch)} rows)...")
             session.execute(insert(ESGMetric), metric_batch)
             total_metrics += len(metric_batch)
-            
-            # Sub-commit every 10 batches to keep transaction log small and show progress on disk
-            if (i // batch_size + 1) % 10 == 0:
-                session.commit()
-                print(f"    [OK] Progress: {total_metrics} rows committed.")
             
         session.commit()
         print(f"Data ingestion completed successfully. Total Metrics: {total_metrics}")

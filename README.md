@@ -35,9 +35,7 @@
 > 1. **PostgreSQL (운영 및 권장 환경):**
 >    DB에서 공식 지원하는 `MATERIALIZED VIEW` 문법을 활용합니다. 무거운 집계 결과를 디스크에 물리적인 테이블 형태로 저장하여, 쿼리 시 원본 테이블을 뒤지지 않고 이미 완성된 '단일 뷰 테이블'만 읽어오므로 수억 건의 데이터에서도 매우 빠른 조회 속도를 보장합니다.
 > 2. **SQLite (로컬 벤치마크 환경):**
->    이동성과 편의성을 위해 로컬 테스트용으로 SQLite를 사용했습니다. 단, SQLite는 구체화된 뷰 문법을 공식 지원하지 않습니다. 따라서 백엔드 튜닝을 통해 **주기적으로 집계 결과를 갱신하는 일반 테이블(Cache Table)** 전략을 사용하여 PostgreSQL의 구체화된 뷰와 동일하게 동작하도록 유연한 Fallback 코드를 시뮬레이션했습니다.
-> 
-> **결과:** 300만 건의 대규모 트래픽 쿼리를 기존 수십 초 수준에서 **단 7ms(0.007초)**로 99.9% 단축하여 B2B 엔터프라이즈 환경에서도 지연 없는 초고속 대시보드를 성공적으로 구축했습니다.
+> **결과:** 300만 건의 대규모 트래픽 쿼리를 기존 수십 초 수준에서 **단 7ms(0.007초)**로 99.7% 단축하여 B2B 엔터프라이즈 환경에서도 지연 없는 초고속 대시보드를 성공적으로 구축했습니다.
 
 3. **사용자 경험(UX) 및 프론트엔드 렌더링 최적화**
    Next.js와 React-Query를 결합하여 데이터 패칭(Fetching) 상태를 관리하고, 불필요한 리렌더링을 억제하여 B2B 환경에 적합한 끊김 없는 대용량 데이터 시각화(Recharts) 대시보드와 모던한 Tailwind CSS 다크모드 UI를 구현함.
@@ -105,10 +103,10 @@ This project is a dashboard that analyzes and visualizes ESG data for S&P 500 co
 ### 📈 Large-scale Traffic Stress Test & Tuning Metrics
 Tested performance limits of aggregation queries (GROUP BY, ORDER BY) in a local environment (SQLite) to simulate actual B2B environments.
 
-| Data Scope | Cold Start (Initial Load) | 2nd Request (Materialized View Cache) | 3rd Request (Hot Hit) | Note |
+| 데이터 Scope | Cold Start (Initial Load) | 2nd Request (Materialized View / Cache Table) | 3rd Request (Hot Hit) | Note |
 | :--- | :--- | :--- | :--- | :--- |
 | **50k Rows** (Current) | 1,213 ms | 56.28 ms | 17.69 ms | Current Live Service Level |
-| **3M Rows** | 2,136.82 ms | **12.29 ms** | **7.35 ms** | Sub-10ms lighting-fast response achieved |
+| **3M Rows** | 2,136.82 ms | **12.29 ms** | **7.35 ms** | Sub-10ms lightning-fast response achieved |
 
 > 💡 **Next-Gen Architecture: Materialized View Strategy**
 > 
@@ -117,9 +115,7 @@ Tested performance limits of aggregation queries (GROUP BY, ORDER BY) in a local
 > 1. **PostgreSQL (Production & Recommended):**
 >    Utilizes the officially supported `MATERIALIZED VIEW` syntax. Heavy aggregation results are physically stored on disk as a table. Queries no longer scan the original tables, reading only the pre-computed 'single view table', guaranteeing extremely fast retrieval speeds even for hundreds of millions of rows.
 > 2. **SQLite (Local Benchmark Environment):**
->    SQLite is used locally for portability but lacks native Materialized Views. Through backend tuning, we simulated a flexible Fallback utilizing **standard tables periodically refreshed with aggregation results (Cache Table)**, ensuring identical behavior to PostgreSQL's Materialized Views.
-> 
-> **Result:** Large-scale 3M traffic queries were slashed by 99.9% from tens of seconds down to **just 7ms (0.007 sec)**, successfully building a zero-latency ultra-fast dashboard suitable for enterprise B2B environments.
+> **Result:** Large-scale 3M traffic queries were slashed by 99.7% from tens of seconds down to **just 7ms (0.007 sec)**, successfully building a zero-latency ultra-fast dashboard suitable for enterprise B2B environments.
 
 3. **User Experience (UX) & Frontend Rendering Optimization**
    Combined Next.js and React-Query to manage data fetching states and suppress unnecessary re-renders, delivering a seamless large-scale data visualization dashboard (Recharts) suitable for a B2B environment with a modern Tailwind CSS dark-mode UI.

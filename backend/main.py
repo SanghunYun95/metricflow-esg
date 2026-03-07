@@ -90,17 +90,16 @@ def get_esg_summary(
             
         results = db.execute(text(query_sql), params).mappings().all()
         
-        if results:
-            logger.info(f"Cache Hit: Sector summary served from Materialized View (Rows: {len(results)})")
-            return [
-                SectorSummaryResponse(
-                    sector=row["sector"],
-                    avg_e_score=round(row["avg_e_score"] or 0, 2),
-                    avg_s_score=round(row["avg_s_score"] or 0, 2),
-                    avg_g_score=round(row["avg_g_score"] or 0, 2),
-                    avg_total_score=round(row["avg_total_score"] or 0, 2)
-                ) for row in results
-            ]
+        logger.info(f"Cache Hit: Sector summary served from Materialized View (Rows: {len(results)})")
+        return [
+            SectorSummaryResponse(
+                sector=row["sector"],
+                avg_e_score=round(row["avg_e_score"] or 0, 2),
+                avg_s_score=round(row["avg_s_score"] or 0, 2),
+                avg_g_score=round(row["avg_g_score"] or 0, 2),
+                avg_total_score=round(row["avg_total_score"] or 0, 2)
+            ) for row in results
+        ]
     except (ProgrammingError, OperationalError):
         db.rollback()
         logger.warning("Cache Miss: Computing sector summary manually from 10,000,000+ rows...")
@@ -200,7 +199,10 @@ def get_top_companies(
         ]
 
 def get_admin_key(x_admin_key: str = Header(..., description="Administrator API Key")):
-    expected_key = os.getenv("ADMIN_API_KEY", "super-secret-admin-key")
+    expected_key = os.getenv("ADMIN_API_KEY")
+    if not expected_key:
+        logger.error("ADMIN_API_KEY is not configured")
+        raise HTTPException(status_code=503, detail="Admin authentication is not configured")
     if x_admin_key != expected_key:
         raise HTTPException(status_code=403, detail="Invalid admin key")
     return True
