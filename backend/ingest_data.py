@@ -2,31 +2,29 @@ import os
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text, func, insert
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.exc import ProgrammingError, OperationalError
 from models import Base, Company, ESGMetric
 
 # Ensure DATABASE_URL is set or use a default local sqlite for testing
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./esg_data.db")
 
-def generate_synthetic_data(companies, months=60):
+def generate_synthetic_data_for_batch(companies: list, months: int = 60):
     metrics = []
-    # Base date: e.g., 5 years starting Jan 2019
-    start_date = datetime(2019, 1, 1)
-    
-    for comp in companies:
-        company_id = comp['id']
-        current_e = np.random.uniform(10, 40) # Lower risk is better
-        current_s = np.random.uniform(10, 40)
-        current_g = np.random.uniform(10, 40)
-        current_carbon = np.random.uniform(100, 10000)
+    for company in companies:
+        company_id = company['id']
+        # Initialize scores to be higher, as lower risk is better, so higher score is better
+        current_e, current_s, current_g = np.random.uniform(50, 90, 3) 
+        current_carbon = np.random.uniform(500, 5000)
         
-        for m in range(months):
-            year = start_date.year + ((start_date.month - 1 + m) // 12)
-            month = ((start_date.month - 1 + m) % 12) + 1
-            year_month = f"{year:04d}-{month:02d}"
+        for i in range(months):
+            # Calculate year and month (last 5 years)
+            year = 2024 - (months - 1 - i) // 12
+            month = 1 + (i % 12)
+            year_month = f"{year}-{month:02d}"
             
-            # Cumulative Random walk
+            # Subtle random walk for better looking data
             current_e = max(0, min(100, current_e + np.random.normal(0, 1)))
             current_s = max(0, min(100, current_s + np.random.normal(0, 1)))
             current_g = max(0, min(100, current_g + np.random.normal(0, 1)))
@@ -99,7 +97,14 @@ def ingest_data(max_companies: int | None = None):
     df['industry'] = df['industry'].fillna('Unknown')
 
     # Extract Companies (Target: max_companies companies)
-    print(f"Original CSV has {len(df)} rows. Processing first {max_companies} to reach target metric count...")
+    print(f"Original CSV has {len(df)} rows. Target: {max_companies} companies.")
+    
+    # Duplicate data if needed to reach target count for stress testing
+    if len(df) < max_companies:
+        print(f"Duplicating data to reach {max_companies} companies for stress test...")
+        repeats = (max_companies // len(df)) + 1
+        df = pd.concat([df] * repeats, ignore_index=True)
+        
     df = df.head(max_companies)
     
     # Handle duplicate tickers for the unique constraint
@@ -119,16 +124,102 @@ def ingest_data(max_companies: int | None = None):
         session.add_all(companies_to_insert)
         session.flush() # Flush to populate auto-increment IDs
         
-        inserted_companies = [{'id': c.id, 'ticker': c.ticker} for c in companies_to_insert]
+        inserted_companies = [c.id for c in companies_to_insert]
         
         print(f"Generating synthetic time-series data for {len(inserted_companies)} companies (60 months each)...")
-        metric_records = generate_synthetic_data(inserted_companies, months=60)
         
-        print(f"Preparing to bulk insert {len(metric_records)} ESG metric records into the database (Total: {len(metric_records)})...")
-        session.bulk_insert_mappings(ESGMetric, metric_records)
-        
+        # Batch generation and insertion to prevent MemoryError (Chunks of 1000 companies = 60000 records)
+        batch_size = 1000
+        total_metrics = 0
+        for i in range(0, len(inserted_companies), batch_size):
+            company_batch = [{'id': cid} for cid in inserted_companies[i:i+batch_size]]
+            metric_batch = generate_synthetic_data_for_batch(company_batch, months=60)
+            
+            # Print progress and insert using Core for max performance
+            print(f"[*] Inserting batch: {i//batch_size + 1}/{(len(inserted_companies) + batch_size - 1)//batch_size} ({len(metric_batch)} rows)...")
+            session.execute(insert(ESGMetric), metric_batch)
+            total_metrics += len(metric_batch)
+            
+            # Sub-commit every 10 batches to keep transaction log small and show progress on disk
+            if (i // batch_size + 1) % 10 == 0:
+                session.commit()
+                print(f"    [OK] Progress: {total_metrics} rows committed.")
+            
         session.commit()
-        print(f"Data ingestion completed successfully. Total Metrics: {len(metric_records)}")
+        print(f"Data ingestion completed successfully. Total Metrics: {total_metrics}")
+        
+        # Initialize Materialized Views for caching
+        print("Initializing Materialized Views / Cache Tables for ultra-fast performance...")
+        dialect = engine.dialect.name
+        with engine.connect() as conn:
+            from sqlalchemy import text
+            if dialect == "sqlite":
+                conn.execute(text("DROP TABLE IF EXISTS mv_esg_summary_sector"))
+                conn.execute(text("DROP TABLE IF EXISTS mv_top_companies"))
+                
+                sector_query = """
+                SELECT c.industry AS sector,
+                       AVG(m.e_score) AS avg_e_score,
+                       AVG(m.s_score) AS avg_s_score,
+                       AVG(m.g_score) AS avg_g_score,
+                       AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS avg_total_score
+                FROM companies c
+                JOIN esg_metrics m ON c.id = m.company_id
+                WHERE c.industry IS NOT NULL AND c.industry != 'Unknown'
+                GROUP BY c.industry
+                """
+                conn.execute(text(f"CREATE TABLE mv_esg_summary_sector AS {sector_query}"))
+                
+                top_comp_query = """
+                SELECT c.ticker, c.security_name, c.industry AS sector,
+                       AVG(m.e_score) AS e_score,
+                       AVG(m.s_score) AS s_score,
+                       AVG(m.g_score) AS g_score,
+                       AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS total_score
+                FROM companies c
+                JOIN esg_metrics m ON c.id = m.company_id
+                GROUP BY c.ticker, c.security_name, c.industry
+                """
+                conn.execute(text(f"CREATE TABLE mv_top_companies AS {top_comp_query}"))
+                
+                conn.execute(text("CREATE INDEX idx_mv_sector ON mv_esg_summary_sector(sector)"))
+                conn.execute(text("CREATE INDEX idx_mv_top_comp_total ON mv_top_companies(total_score)"))
+                conn.execute(text("CREATE INDEX idx_mv_top_comp_sector ON mv_top_companies(sector)"))
+            else:
+                conn.execute(text("DROP MATERIALIZED VIEW IF EXISTS mv_esg_summary_sector"))
+                conn.execute(text("DROP MATERIALIZED VIEW IF EXISTS mv_top_companies"))
+                
+                sector_query = """
+                SELECT c.industry AS sector,
+                       AVG(m.e_score) AS avg_e_score,
+                       AVG(m.s_score) AS avg_s_score,
+                       AVG(m.g_score) AS avg_g_score,
+                       AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS avg_total_score
+                FROM companies c
+                JOIN esg_metrics m ON c.id = m.company_id
+                WHERE c.industry IS NOT NULL AND c.industry != 'Unknown'
+                GROUP BY c.industry
+                """
+                conn.execute(text(f"CREATE MATERIALIZED VIEW mv_esg_summary_sector AS {sector_query}"))
+                
+                top_comp_query = """
+                SELECT c.ticker, c.security_name, c.industry AS sector,
+                       AVG(m.e_score) AS e_score,
+                       AVG(m.s_score) AS s_score,
+                       AVG(m.g_score) AS g_score,
+                       AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS total_score
+                FROM companies c
+                JOIN esg_metrics m ON c.id = m.company_id
+                GROUP BY c.ticker, c.security_name, c.industry
+                """
+                conn.execute(text(f"CREATE MATERIALIZED VIEW mv_top_companies AS {top_comp_query}"))
+                
+                conn.execute(text("CREATE UNIQUE INDEX idx_mv_sector ON mv_esg_summary_sector(sector)"))
+                conn.execute(text("CREATE UNIQUE INDEX idx_mv_top_comp_ticker ON mv_top_companies(ticker, security_name, sector)"))
+                conn.execute(text("CREATE INDEX idx_mv_top_comp_total ON mv_top_companies(total_score)"))
+                conn.execute(text("CREATE INDEX idx_mv_top_comp_sector ON mv_top_companies(sector)"))
+            conn.commit()
+            print("Materialized Views successfully initialized!")
     except Exception as e:
         session.rollback()
         print(f"Failed to ingest data. Error: {e}")
