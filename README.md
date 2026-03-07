@@ -102,7 +102,7 @@ This project is a dashboard that analyzes and visualizes ESG data for S&P 500 co
 ### 📈 Large-scale Traffic Stress Test & Tuning Metrics
 Tested performance limits of aggregation queries (GROUP BY, ORDER BY) in a local environment (SQLite) to simulate actual B2B environments.
 
-| 데이터 Scope | Cold Start (Initial Load) | 2nd Request (Materialized View / Cache Table) | 3rd Request (Hot Hit) | Note |
+| Data Scope | Cold Start (Initial Load) | 2nd Request (Materialized View / Cache Table) | 3rd Request (Hot Hit) | Note |
 | :--- | :--- | :--- | :--- | :--- |
 | **50k Rows** (Current) | 1,213 ms | 56.28 ms | 17.69 ms | Current Live Service Level |
 | **3M Rows** | 2,136.82 ms | **12.29 ms** | **7.35 ms** | Sub-10ms lightning-fast response achieved |
