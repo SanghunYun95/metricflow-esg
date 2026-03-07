@@ -1,0 +1,502 @@
+@coderabbitai[bot] commented on this pull request.
+
+Actionable comments posted: 8
+
+Caution
+
+Some comments are outside the diff and can’t be posted inline due to platform limitations.
+
+⚠️ Outside diff range comments (1)
+backend/ingest_data.py (1)
+119-128: ⚠️ Potential issue | 🟠 Major
+
+unique_companies_df가 실제로는 중복을 제거하지 않습니다.
+
+여기서는 copy()만 하고 있어서, 입력 CSV에 같은 ticker가 두 번 이상 있으면 backend/models.py의 Company.ticker unique 제약 때문에 Line 128의 session.flush()가 실패합니다. 복제된 행에만 suffix를 붙이고 원본 중복은 그대로 두고 있어서 ingest가 입력 데이터에 따라 불안정합니다.
+
+수정 예시
+-    unique_companies_df = df[['ticker', 'security_name', 'industry']].copy()
++    unique_companies_df = (
++        df[['ticker', 'security_name', 'industry']]
++        .drop_duplicates(subset=['ticker'])
++        .copy()
++    )
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@backend/ingest_data.py` around lines 119 - 128, unique_companies_df is not
+deduplicated (only copy() is called) so creating Company instances from
+company_records can violate the unique constraint on Company.ticker and cause
+session.flush() to fail; fix by de-duplicating unique_companies_df on the ticker
+column (e.g., drop_duplicates(subset='ticker', keep='first')) before converting
+to records and building Company(**rec) objects, and ensure any prior logic that
+appended suffixes does not produce duplicate ticker values before calling
+session.add_all and session.flush().
+🤖 Prompt for all review comments with AI agents
+Verify each finding against the current code and only fix it if needed.
+
+Inline comments:
+In `@backend/cache_utils.py`:
+- Around line 53-64: The refresh path (when is_refresh is True) assumes
+mv_esg_summary_sector and mv_top_companies already exist and fails on initial
+deployments; modify the is_refresh branch to first check existence of those
+materialized views (e.g., query pg_matviews or pg_class for
+mv_esg_summary_sector and mv_top_companies) before calling
+conn.execute(text("REFRESH MATERIALIZED VIEW ...")). If a view is missing, call
+or invoke the existing creation logic (the function that creates the
+materialized views / cache creation path used elsewhere) as a fallback, then
+proceed to refresh; replace the current unconditional raise on exception with
+logic that attempts create-if-missing and logs outcomes while avoiding an
+immediate 500 on first-run.
+
+In `@backend/ingest_data.py`:
+- Around line 146-149: The current loop calls session.commit() every 10 batches
+(session.commit()) while the script earlier truncates the target table, leaving
+partial data persisted if a later exception occurs because session.rollback()
+only reverts the last transaction; to fix, either remove the intermediate
+commits and perform a single session.commit() after the full load so the
+try/except rollback reverts the entire load, or implement a safe staging
+pattern: write batches (with optional commits) into a staging table, commit
+there, then atomically swap/rename the staging table into place (or perform a
+single transactional INSERT INTO target SELECT FROM staging and commit once),
+and ensure session.rollback() is relied on to undo failures; update the loop
+that currently calls session.commit() and the code that empties the target table
+to use the chosen approach (single final commit or staging table swap) and keep
+session.rollback() semantics correct.
+- Around line 103-109: The code can raise ZeroDivisionError when the input
+DataFrame is empty because original_len == 0 is used in the modulo; before the
+for loop that uses original_len (the block using original_len, df, max_companies
+and row_idx = i % original_len), add an explicit guard that checks if
+original_len == 0 and bail out early (e.g., log an informative message and
+return or raise a clear ValueError) so the function exits before attempting the
+modulo and avoids leaving state partially initialized.
+
+In `@backend/main.py`:
+- Around line 93-103: The handler currently only returns when "results" is
+truthy, causing None to be returned for empty query results; update the logic
+around the logger/info and SectorSummaryResponse construction so empty lists are
+returned as an empty list of SectorSummaryResponse instead of falling through to
+None. Specifically, in the block that references logger.info and constructs
+SectorSummaryResponse for each row, treat an empty results list as a valid
+result (e.g., remove the truthy-only guard or explicitly return [] when results
+== []) so the function always returns a list (possibly empty) rather than None.
+- Around line 202-206: The get_admin_key function currently uses a hardcoded
+default ("super-secret-admin-key") via os.getenv, allowing auth bypass when
+ADMIN_API_KEY is unset; change it to explicitly require the env var and fail
+fast: read ADMIN_API_KEY using os.environ or os.getenv then if it's None/empty
+raise an HTTPException (e.g., 500 with "Admin API key not configured"); then
+compare x_admin_key to that real expected value and raise 403 on mismatch; keep
+function name get_admin_key and the x_admin_key parameter unchanged so callers
+continue to work.
+
+In `@README.md`:
+- Line 111: README.md contains a typo: the phrase "lighting-fast" should be
+corrected to "lightning-fast"; locate the table cell containing "**3M Rows** |
+2,136.82 ms | **12.29 ms** | **7.35 ms** | Sub-10ms lighting-fast response
+achieved" and replace "lighting-fast" with "lightning-fast" so the sentence
+reads "Sub-10ms lightning-fast response achieved".
+- Around line 26-40: The README table header "Materialized View Cache" is
+misleading for the SQLite benchmark because SQLite used a cache-table fallback,
+not native MATERIALIZED VIEW; update the table header and any repeated labels
+(e.g., "Materialized View Cache") to something like "Cache Table (SQLite
+fallback)" or "Cache Table (Materialized View fallback)" so it clearly reflects
+the fallback strategy, and make the same label change in the corresponding
+paragraph(s) that reference the SQLite benchmark (the block that explains SQLite
+fallback behavior) to keep wording consistent.
+- Line 40: Replace the two overstated benchmark lines in README.md (the sentence
+starting "결과: 300만 건의 대규모 트래픽 쿼리를 ... 단 7ms(0.007초)로 99.9% 단축") and the similar
+sentence around line 122 with the actual measured values from the table: state
+the latency change as "2,136.82 ms → 7.35 ms" and compute and display the
+correct percentage reduction (or simply say "약 X% 단축" using the computed value),
+ensuring the text exactly matches the table entries and removes the phrasing "수십
+초" and the hardcoded "99.9% 단축".
+
+---
+
+Outside diff comments:
+In `@backend/ingest_data.py`:
+- Around line 119-128: unique_companies_df is not deduplicated (only copy() is
+called) so creating Company instances from company_records can violate the
+unique constraint on Company.ticker and cause session.flush() to fail; fix by
+de-duplicating unique_companies_df on the ticker column (e.g.,
+drop_duplicates(subset='ticker', keep='first')) before converting to records and
+building Company(**rec) objects, and ensure any prior logic that appended
+suffixes does not produce duplicate ticker values before calling session.add_all
+and session.flush().
+ℹ️ Review info ⚙️ Run configuration
+Configuration used: Organization UI
+
+Review profile: CHILL
+
+Plan: Pro
+
+Run ID: c1933321-19e3-45c6-908a-4d4a8150f43c
+
+📥 Commits
+Reviewing files that changed from the base of the PR and between 524aab7 and 612cc70.
+
+📒 Files selected for processing (5)
+.gitignore
+README.md
+backend/cache_utils.py
+backend/ingest_data.py
+backend/main.py
+In backend/cache_utils.py:
+
+> +        if is_refresh:
++            # We attempt standard REFRESH. 
++            # Note: CONCURRENTLY is removed here because execution in FastAPI often occurs 
++            # within a session transaction block (autocommit=False) which blocks CONCURRENTLY.
++            # Plain REFRESH takes an exclusive lock but reliably works in all contexts.
++            try:
++                conn.execute(text("REFRESH MATERIALIZED VIEW mv_esg_summary_sector"))
++                conn.execute(text("REFRESH MATERIALIZED VIEW mv_top_companies"))
++                logger.info("PostgreSQL Materialized Views refreshed successfully.")
++            except Exception as e:
++                logger.error(f"Failed to refresh Materialized Views: {e}")
++                raise
+⚠️ Potential issue | 🟠 Major
+
+초기 상태의 refresh 요청이 바로 실패합니다.
+
+is_refresh=True 경로는 두 materialized view가 이미 있다고 가정합니다. 그래서 초기 배포, 스키마 재생성 직후, 또는 이전 캐시 생성이 실패한 상태에서 backend/main.py Line 222가 이 함수를 호출하면 /api/v1/system/refresh-cache가 복구 대신 500으로 끝납니다. refresh 전에 존재 여부를 확인하고, 없으면 create 경로로 폴백해야 합니다.
+
+🧰 Tools 🪛 Ruff (0.15.4)
+[warning] 63-63: Use logging.exception instead of logging.error
+
+Replace with exception
+
+(TRY400)
+
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@backend/cache_utils.py` around lines 53 - 64, The refresh path (when
+is_refresh is True) assumes mv_esg_summary_sector and mv_top_companies already
+exist and fails on initial deployments; modify the is_refresh branch to first
+check existence of those materialized views (e.g., query pg_matviews or pg_class
+for mv_esg_summary_sector and mv_top_companies) before calling
+conn.execute(text("REFRESH MATERIALIZED VIEW ...")). If a view is missing, call
+or invoke the existing creation logic (the function that creates the
+materialized views / cache creation path used elsewhere) as a fallback, then
+proceed to refresh; replace the current unconditional raise on exception with
+logic that attempts create-if-missing and logs outcomes while avoiding an
+immediate 500 on first-run.
+In backend/ingest_data.py:
+
+> +    original_len = len(df)
++    
++    print(f"Original CSV has {original_len} rows. Target: {max_companies} companies.")
+     
+-    # Handle duplicate tickers for the unique constraint
+-    # We'll use ticker + row index if duplicate exists to keep them unique
+-    df['ticker_orig'] = df['ticker']
+-    df['ticker'] = df.groupby('ticker').cumcount().astype(str)
+-    df['ticker'] = df.apply(lambda x: x['ticker_orig'] if x['ticker'] == '0' else f"{x['ticker_orig']}-{x['ticker']}", axis=1)
++    for i in range(max_companies):
++        row_idx = i % original_len
++        row = df.iloc[row_idx].copy()
+⚠️ Potential issue | 🟡 Minor
+
+빈 입력 CSV에서 바로 ZeroDivisionError가 납니다.
+
+original_len이 0이면 Line 108의 modulo에서 즉시 예외가 납니다. 입력이 비었을 때는 루프 전에 명시적으로 중단해야 원인이 더 분명하고, 반쯤 초기화된 상태도 피할 수 있습니다.
+
+수정 예시
+     companies_data = []
+     original_len = len(df)
++    if original_len == 0:
++        print("No source rows found in preprocessed_content.csv. Ingestion cancelled.")
++        return
+     
+     print(f"Original CSV has {original_len} rows. Target: {max_companies} companies.")
+📝 Committable suggestion
+‼️ IMPORTANT
+Carefully review the code before committing. Ensure that it accurately replaces the highlighted code, contains no missing lines, and has no issues with indentation. Thoroughly test & benchmark the code to ensure it meets the requirements.
+
+⬇️ Suggested change
+-    original_len = len(df)
+-    
+-    print(f"Original CSV has {original_len} rows. Target: {max_companies} companies.")
+-    
+-    # Handle duplicate tickers for the unique constraint
+-    # We'll use ticker + row index if duplicate exists to keep them unique
+-    df['ticker_orig'] = df['ticker']
+-    df['ticker'] = df.groupby('ticker').cumcount().astype(str)
+-    df['ticker'] = df.apply(lambda x: x['ticker_orig'] if x['ticker'] == '0' else f"{x['ticker_orig']}-{x['ticker']}", axis=1)
+-    for i in range(max_companies):
+-        row_idx = i % original_len
+-        row = df.iloc[row_idx].copy()
++    original_len = len(df)
++    if original_len == 0:
++        print("No source rows found in preprocessed_content.csv. Ingestion cancelled.")
++        return
++    
++    print(f"Original CSV has {original_len} rows. Target: {max_companies} companies.")
++    
++    for i in range(max_companies):
++        row_idx = i % original_len
++        row = df.iloc[row_idx].copy()
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@backend/ingest_data.py` around lines 103 - 109, The code can raise
+ZeroDivisionError when the input DataFrame is empty because original_len == 0 is
+used in the modulo; before the for loop that uses original_len (the block using
+original_len, df, max_companies and row_idx = i % original_len), add an explicit
+guard that checks if original_len == 0 and bail out early (e.g., log an
+informative message and return or raise a clear ValueError) so the function
+exits before attempting the modulo and avoids leaving state partially
+initialized.
+In backend/ingest_data.py:
+
+> +            # Sub-commit every 10 batches to keep transaction log small and show progress on disk
++            if (i // batch_size + 1) % 10 == 0:
++                session.commit()
++                print(f"    [OK] Progress: {total_metrics} rows committed.")
+⚠️ Potential issue | 🟠 Major
+
+중간 커밋 때문에 실패 시 반쯤 적재된 DB가 남습니다.
+
+이 스크립트는 Line 78에서 기존 테이블을 모두 비운 뒤 적재를 시작합니다. 그런데 10배치마다 커밋하면 이후 배치에서 예외가 나도 except의 rollback은 마지막 트랜잭션만 되돌리고, 앞선 배치들은 영구 반영된 채 남습니다. 전체 적재를 원자적으로 유지하거나, 정말 중간 커밋이 필요하면 staging table에 적재 후 최종 swap 하는 패턴이 더 안전합니다.
+
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@backend/ingest_data.py` around lines 146 - 149, The current loop calls
+session.commit() every 10 batches (session.commit()) while the script earlier
+truncates the target table, leaving partial data persisted if a later exception
+occurs because session.rollback() only reverts the last transaction; to fix,
+either remove the intermediate commits and perform a single session.commit()
+after the full load so the try/except rollback reverts the entire load, or
+implement a safe staging pattern: write batches (with optional commits) into a
+staging table, commit there, then atomically swap/rename the staging table into
+place (or perform a single transactional INSERT INTO target SELECT FROM staging
+and commit once), and ensure session.rollback() is relied on to undo failures;
+update the loop that currently calls session.commit() and the code that empties
+the target table to use the chosen approach (single final commit or staging
+table swap) and keep session.rollback() semantics correct.
+In backend/main.py:
+
+> +        if results:
++            logger.info(f"Cache Hit: Sector summary served from Materialized View (Rows: {len(results)})")
++            return [
++                SectorSummaryResponse(
++                    sector=row["sector"],
++                    avg_e_score=round(row["avg_e_score"] or 0, 2),
++                    avg_s_score=round(row["avg_s_score"] or 0, 2),
++                    avg_g_score=round(row["avg_g_score"] or 0, 2),
++                    avg_total_score=round(row["avg_total_score"] or 0, 2)
++                ) for row in results
++            ]
+⚠️ Potential issue | 🟠 Major
+
+0건 조회 시 None이 반환됩니다.
+
+Line 93에서 빈 결과를 건너뛰기 때문에, 캐시 테이블은 존재하지만 조회 결과가 0건인 경우 함수가 그대로 끝납니다. 이 엔드포인트는 리스트를 반환해야 하므로 빈 리스트 대신 None이 나가면서 응답 검증 단계에서 실패합니다. 빈 결과도 정상 경로로 바로 반환해야 합니다.
+
+수정 예시
+-        if results:
+-            logger.info(f"Cache Hit: Sector summary served from Materialized View (Rows: {len(results)})")
+-            return [
+-                SectorSummaryResponse(
+-                    sector=row["sector"],
+-                    avg_e_score=round(row["avg_e_score"] or 0, 2),
+-                    avg_s_score=round(row["avg_s_score"] or 0, 2),
+-                    avg_g_score=round(row["avg_g_score"] or 0, 2),
+-                    avg_total_score=round(row["avg_total_score"] or 0, 2)
+-                ) for row in results
+-            ]
++        logger.info(f"Cache Hit: Sector summary served from Materialized View (Rows: {len(results)})")
++        return [
++            SectorSummaryResponse(
++                sector=row["sector"],
++                avg_e_score=round(row["avg_e_score"] or 0, 2),
++                avg_s_score=round(row["avg_s_score"] or 0, 2),
++                avg_g_score=round(row["avg_g_score"] or 0, 2),
++                avg_total_score=round(row["avg_total_score"] or 0, 2)
++            ) for row in results
++        ]
+📝 Committable suggestion
+‼️ IMPORTANT
+Carefully review the code before committing. Ensure that it accurately replaces the highlighted code, contains no missing lines, and has no issues with indentation. Thoroughly test & benchmark the code to ensure it meets the requirements.
+
+⬇️ Suggested change
+-        if results:
+-            logger.info(f"Cache Hit: Sector summary served from Materialized View (Rows: {len(results)})")
+-            return [
+-                SectorSummaryResponse(
+-                    sector=row["sector"],
+-                    avg_e_score=round(row["avg_e_score"] or 0, 2),
+-                    avg_s_score=round(row["avg_s_score"] or 0, 2),
+-                    avg_g_score=round(row["avg_g_score"] or 0, 2),
+-                    avg_total_score=round(row["avg_total_score"] or 0, 2)
+-                ) for row in results
+-            ]
++        logger.info(f"Cache Hit: Sector summary served from Materialized View (Rows: {len(results)})")
++        return [
++            SectorSummaryResponse(
++                sector=row["sector"],
++                avg_e_score=round(row["avg_e_score"] or 0, 2),
++                avg_s_score=round(row["avg_s_score"] or 0, 2),
++                avg_g_score=round(row["avg_g_score"] or 0, 2),
++                avg_total_score=round(row["avg_total_score"] or 0, 2)
++            ) for row in results
++        ]
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@backend/main.py` around lines 93 - 103, The handler currently only returns
+when "results" is truthy, causing None to be returned for empty query results;
+update the logic around the logger/info and SectorSummaryResponse construction
+so empty lists are returned as an empty list of SectorSummaryResponse instead of
+falling through to None. Specifically, in the block that references logger.info
+and constructs SectorSummaryResponse for each row, treat an empty results list
+as a valid result (e.g., remove the truthy-only guard or explicitly return []
+when results == []) so the function always returns a list (possibly empty)
+rather than None.
+In backend/main.py:
+
+> +def get_admin_key(x_admin_key: str = Header(..., description="Administrator API Key")):
++    expected_key = os.getenv("ADMIN_API_KEY", "super-secret-admin-key")
++    if x_admin_key != expected_key:
++        raise HTTPException(status_code=403, detail="Invalid admin key")
++    return True
+⚠️ Potential issue | 🔴 Critical
+
+기본 관리자 키는 사실상 인증 우회입니다.
+
+Line 203의 기본값이 남아 있으면 ADMIN_API_KEY를 설정하지 않은 배포에서 누구나 알려진 문자열로 관리자 엔드포인트를 호출할 수 있습니다. 이 PR은 캐시 refresh를 외부 HTTP로 노출하므로, 기본값 대신 미설정 시 즉시 실패하도록 바꾸는 편이 안전합니다.
+
+수정 예시
+ def get_admin_key(x_admin_key: str = Header(..., description="Administrator API Key")):
+-    expected_key = os.getenv("ADMIN_API_KEY", "super-secret-admin-key")
++    expected_key = os.getenv("ADMIN_API_KEY")
++    if not expected_key:
++        logger.error("ADMIN_API_KEY is not configured")
++        raise HTTPException(status_code=503, detail="Admin authentication is not configured")
+     if x_admin_key != expected_key:
+         raise HTTPException(status_code=403, detail="Invalid admin key")
+     return True
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@backend/main.py` around lines 202 - 206, The get_admin_key function currently
+uses a hardcoded default ("super-secret-admin-key") via os.getenv, allowing auth
+bypass when ADMIN_API_KEY is unset; change it to explicitly require the env var
+and fail fast: read ADMIN_API_KEY using os.environ or os.getenv then if it's
+None/empty raise an HTTPException (e.g., 500 with "Admin API key not
+configured"); then compare x_admin_key to that real expected value and raise 403
+on mismatch; keep function name get_admin_key and the x_admin_key parameter
+unchanged so callers continue to work.
+In README.md:
+
+> +| 데이터 규모 | 콜드 스타트 (초기 로드) | 2회차 요청 (Materialized View 캐시) | 3회차 요청 (핫 히트) | 비고 |
++| :--- | :--- | :--- | :--- | :--- |
++| **5만 건** (기존) | 1,213 ms | 56.28 ms | 17.69 ms | 현재 라이브 서비스 수준 |
++| **300만 건** | 2,136.82 ms | **12.29 ms** | **7.35 ms** | 10ms 이하의 쾌적한 속도 달성 |
++
++> 💡 **차세대 아키텍처: 구체화된 뷰 (Materialized View) 도입 전략**
++> 
++> 대규모 데이터를 매번 `JOIN`, `GROUP BY`로 집계하면 사용자가 늘어날수록 급격한 지연(Latency)이 발생합니다. 이를 극복하기 위해 비용이 드는 외부 인프라(Upstash Redis 등)를 추가하는 대신, 자체 데이터베이스 성능을 극대화하는 **구체화된 뷰(Materialized View)**를 아키텍처에 도입했습니다.
++>
++> 1. **PostgreSQL (운영 및 권장 환경):**
++>    DB에서 공식 지원하는 `MATERIALIZED VIEW` 문법을 활용합니다. 무거운 집계 결과를 디스크에 물리적인 테이블 형태로 저장하여, 쿼리 시 원본 테이블을 뒤지지 않고 이미 완성된 '단일 뷰 테이블'만 읽어오므로 수억 건의 데이터에서도 매우 빠른 조회 속도를 보장합니다.
++> 2. **SQLite (로컬 벤치마크 환경):**
++>    이동성과 편의성을 위해 로컬 테스트용으로 SQLite를 사용했습니다. 단, SQLite는 구체화된 뷰 문법을 공식 지원하지 않습니다. 따라서 백엔드 튜닝을 통해 **주기적으로 집계 결과를 갱신하는 일반 테이블(Cache Table)** 전략을 사용하여 PostgreSQL의 구체화된 뷰와 동일하게 동작하도록 유연한 Fallback 코드를 시뮬레이션했습니다.
++> 
++> **결과:** 300만 건의 대규모 트래픽 쿼리를 기존 수십 초 수준에서 **단 7ms(0.007초)**로 99.9% 단축하여 B2B 엔터프라이즈 환경에서도 지연 없는 초고속 대시보드를 성공적으로 구축했습니다.
+⚠️ Potential issue | 🟡 Minor
+
+SQLite 벤치마크에 Materialized View 용어를 직접 붙이면 오해 소지가 있습니다.
+
+이 섹션은 Line 24/106에서 SQLite 로컬 벤치마크라고 설명하고, 본문에서는 SQLite가 native materialized view를 지원하지 않아 cache table fallback을 썼다고 명시합니다. 그런데 표 헤더는 Materialized View Cache로 적혀 있어 실제 측정 대상이 PostgreSQL의 native materialized view였던 것처럼 읽힙니다. 표 라벨을 fallback 전략 기준으로 바꾸는 게 더 정확합니다.
+
+수정 예시
+-| 데이터 규모 | 콜드 스타트 (초기 로드) | 2회차 요청 (Materialized View 캐시) | 3회차 요청 (핫 히트) | 비고 |
++| 데이터 규모 | 콜드 스타트 (초기 로드) | 2회차 요청 (사전 계산 캐시/Cache Table) | 3회차 요청 (핫 히트) | 비고 |
+
+-| Data Scope | Cold Start (Initial Load) | 2nd Request (Materialized View Cache) | 3rd Request (Hot Hit) | Note |
++| Data Scope | Cold Start (Initial Load) | 2nd Request (Precomputed Cache / Cache Table) | 3rd Request (Hot Hit) | Note |
+Also applies to: 108-122
+
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@README.md` around lines 26 - 40, The README table header "Materialized View
+Cache" is misleading for the SQLite benchmark because SQLite used a cache-table
+fallback, not native MATERIALIZED VIEW; update the table header and any repeated
+labels (e.g., "Materialized View Cache") to something like "Cache Table (SQLite
+fallback)" or "Cache Table (Materialized View fallback)" so it clearly reflects
+the fallback strategy, and make the same label change in the corresponding
+paragraph(s) that reference the SQLite benchmark (the block that explains SQLite
+fallback behavior) to keep wording consistent.
+In README.md:
+
+> +
++| 데이터 규모 | 콜드 스타트 (초기 로드) | 2회차 요청 (Materialized View 캐시) | 3회차 요청 (핫 히트) | 비고 |
++| :--- | :--- | :--- | :--- | :--- |
++| **5만 건** (기존) | 1,213 ms | 56.28 ms | 17.69 ms | 현재 라이브 서비스 수준 |
++| **300만 건** | 2,136.82 ms | **12.29 ms** | **7.35 ms** | 10ms 이하의 쾌적한 속도 달성 |
++
++> 💡 **차세대 아키텍처: 구체화된 뷰 (Materialized View) 도입 전략**
++> 
++> 대규모 데이터를 매번 `JOIN`, `GROUP BY`로 집계하면 사용자가 늘어날수록 급격한 지연(Latency)이 발생합니다. 이를 극복하기 위해 비용이 드는 외부 인프라(Upstash Redis 등)를 추가하는 대신, 자체 데이터베이스 성능을 극대화하는 **구체화된 뷰(Materialized View)**를 아키텍처에 도입했습니다.
++>
++> 1. **PostgreSQL (운영 및 권장 환경):**
++>    DB에서 공식 지원하는 `MATERIALIZED VIEW` 문법을 활용합니다. 무거운 집계 결과를 디스크에 물리적인 테이블 형태로 저장하여, 쿼리 시 원본 테이블을 뒤지지 않고 이미 완성된 '단일 뷰 테이블'만 읽어오므로 수억 건의 데이터에서도 매우 빠른 조회 속도를 보장합니다.
++> 2. **SQLite (로컬 벤치마크 환경):**
++>    이동성과 편의성을 위해 로컬 테스트용으로 SQLite를 사용했습니다. 단, SQLite는 구체화된 뷰 문법을 공식 지원하지 않습니다. 따라서 백엔드 튜닝을 통해 **주기적으로 집계 결과를 갱신하는 일반 테이블(Cache Table)** 전략을 사용하여 PostgreSQL의 구체화된 뷰와 동일하게 동작하도록 유연한 Fallback 코드를 시뮬레이션했습니다.
++> 
++> **결과:** 300만 건의 대규모 트래픽 쿼리를 기존 수십 초 수준에서 **단 7ms(0.007초)**로 99.9% 단축하여 B2B 엔터프라이즈 환경에서도 지연 없는 초고속 대시보드를 성공적으로 구축했습니다.
+⚠️ Potential issue | 🟡 Minor
+
+벤치마크 요약 수치를 표와 맞춰 주세요.
+
+Line 40과 Line 122의 설명은 현재 표와 수치가 맞지 않습니다. 표 기준으로는 2,136.82 ms → 7.35 ms라서 “수십 초 → 7ms”, “99.9% 단축”으로 읽히면 과장으로 보일 수 있습니다. README 신뢰도를 위해 측정값 그대로 표현하는 편이 안전합니다.
+
+수정 예시
+- **결과:** 300만 건의 대규모 트래픽 쿼리를 기존 수십 초 수준에서 **단 7ms(0.007초)**로 99.9% 단축하여 B2B 엔터프라이즈 환경에서도 지연 없는 초고속 대시보드를 성공적으로 구축했습니다.
++ **결과:** 300만 건 규모의 집계 쿼리를 기준으로 초기 로드 `2,136.82 ms`에서 핫 히트 `7.35 ms`까지 단축했으며, 약 99.7% 수준의 응답 시간 개선을 확인했습니다.
+
+- **Result:** Large-scale 3M traffic queries were slashed by 99.9% from tens of seconds down to **just 7ms (0.007 sec)**, successfully building a zero-latency ultra-fast dashboard suitable for enterprise B2B environments.
++ **Result:** For 3M-row aggregation queries, response time dropped from `2,136.82 ms` on initial load to `7.35 ms` on hot hits, which is roughly a 99.7% improvement in this benchmark.
+Also applies to: 122-122
+
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@README.md` at line 40, Replace the two overstated benchmark lines in
+README.md (the sentence starting "결과: 300만 건의 대규모 트래픽 쿼리를 ... 단 7ms(0.007초)로
+99.9% 단축") and the similar sentence around line 122 with the actual measured
+values from the table: state the latency change as "2,136.82 ms → 7.35 ms" and
+compute and display the correct percentage reduction (or simply say "약 X% 단축"
+using the computed value), ensuring the text exactly matches the table entries
+and removes the phrasing "수십 초" and the hardcoded "99.9% 단축".
+In README.md:
+
+> @@ -80,6 +102,25 @@ This project is a dashboard that analyzes and visualizes ESG data for S&P 500 co
+ 2. **Backend Aggregation Query Tuning (API Latency Reduction)**
+    Rather than loading all data into memory for calculation in the FastAPI backend, tuned aggregation queries at the database level using SQLAlchemy's `func.avg` and `GROUP BY`. This prevented Out-Of-Memory (OOM) errors and resolved dashboard loading delays.
+ 
++### 📈 Large-scale Traffic Stress Test & Tuning Metrics
++Tested performance limits of aggregation queries (GROUP BY, ORDER BY) in a local environment (SQLite) to simulate actual B2B environments.
++
++| Data Scope | Cold Start (Initial Load) | 2nd Request (Materialized View Cache) | 3rd Request (Hot Hit) | Note |
++| :--- | :--- | :--- | :--- | :--- |
++| **50k Rows** (Current) | 1,213 ms | 56.28 ms | 17.69 ms | Current Live Service Level |
++| **3M Rows** | 2,136.82 ms | **12.29 ms** | **7.35 ms** | Sub-10ms lighting-fast response achieved |
+⚠️ Potential issue | 🟡 Minor
+
+영문 문구 오타를 수정해 주세요.
+
+Line 111의 lighting-fast는 lightning-fast가 맞습니다.
+
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@README.md` at line 111, README.md contains a typo: the phrase "lighting-fast"
+should be corrected to "lightning-fast"; locate the table cell containing "**3M
+Rows** | 2,136.82 ms | **12.29 ms** | **7.35 ms** | Sub-10ms lighting-fast
+response achieved" and replace "lighting-fast" with "lightning-fast" so the
+sentence reads "Sub-10ms lightning-fast response achieved".
