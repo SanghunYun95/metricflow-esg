@@ -1,0 +1,44 @@
+name: Keep MetricFlow-ESG Alive
+
+on:
+  schedule:
+    # 10분마다 실행 (분 시 일 월 요일)
+    # 한국 시간 08:32 ~ 18:30은 UTC 기준 23:32 ~ 09:30입니다.
+    # 08:32-08:52 KST (23:32-23:52 UTC)
+    - cron: '32-59/10 23 * * *'
+    # 09:02-17:52 KST (00:02-08:52 UTC)
+    - cron: '2-59/10 0-8 * * *'
+    # 18:02-18:22 KST (09:02-09:22 UTC)
+    - cron: '2-22/10 9 * * *'
+  workflow_dispatch: # 수동 실행 가능하도록 추가
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Keep-alive Request
+        run: |
+          set -uo pipefail
+          URLS=(
+            "https://metricflow-esg-backend.onrender.com/api/v1/sectors"
+            "https://metricflow-esg.vercel.app/"
+          )
+          EXIT_STATUS=0
+          for url in "${URLS[@]}"; do
+            echo "Pinging $url..."
+            # Render (/api/v1/sectors) is GET-only.
+            HTTP_CODE=$(curl -s -L -o /dev/null -w "%{http_code}" --connect-timeout 30 --max-time 120 --retry 3 "$url")
+            HTTP_CODE=${HTTP_CODE:-000}
+            echo "HTTP Status for $url: $HTTP_CODE"
+            
+            if [[ "$HTTP_CODE" == "000" ]]; then
+              echo "::error::Failed to connect to $url (Connection failed)"
+              EXIT_STATUS=1
+            elif [[ "$HTTP_CODE" -ge 200 && "$HTTP_CODE" -lt 500 ]]; then
+              echo "Keep-alive ping sent to $url at $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            else
+              echo "::error::Failed to ping $url (Status: $HTTP_CODE)"
+              EXIT_STATUS=1
+            fi
+          done
+          exit $EXIT_STATUS
