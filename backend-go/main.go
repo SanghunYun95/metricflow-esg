@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/SanghunYun95/metricflow-esg/backend-go/models"
@@ -17,6 +18,7 @@ import (
 )
 
 var db *gorm.DB
+var isRefreshing atomic.Bool
 
 func initDB() {
 	err := godotenv.Load("../.env")
@@ -99,7 +101,9 @@ func main() {
 	}
 
 	log.Printf("Server starting on port %s", port)
-	r.Run(":" + port)
+	if err := r.Run(":" + port); err != nil {
+		log.Fatalf("Server failed to start: %v", err)
+	}
 }
 
 func getSectors(c *gin.Context) {
@@ -180,8 +184,25 @@ func getTopCompanies(c *gin.Context) {
 }
 
 func refreshCache(c *gin.Context) {
+	// 1. 단순 Admin Auth Check (환경변수 ADMIN_SECRET)
+	adminSecret := os.Getenv("ADMIN_SECRET")
+	if adminSecret != "" && c.GetHeader("X-Admin-Secret") != adminSecret {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	// 2. In-flight Guard (중복 실행 방지)
+	if !isRefreshing.CompareAndSwap(false, true) {
+		c.JSON(http.StatusConflict, gin.H{
+			"status":  "conflict",
+			"message": "Cache refresh is already in progress",
+		})
+		return
+	}
+
 	// Go의 강점: 고루틴을 활용한 논블로킹 백그라운드 처리
 	go func() {
+		defer isRefreshing.Store(false)
 		log.Println("Background cache refresh started...")
 		// Materialized View 갱신 로직 (Postgres 기준)
 		dialect := db.Dialector.Name()

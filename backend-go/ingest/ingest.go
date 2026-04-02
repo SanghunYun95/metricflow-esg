@@ -35,8 +35,13 @@ func main() {
 	// DB 연결
 	dsn := os.Getenv("DATABASE_URL")
 	var dialector gorm.Dialector
-	if dsn == "" || dsn == "sqlite:///./esg_data.db" {
-		dialector = sqlite.Open("./esg_data.db")
+	if dsn == "" {
+		dsn = "sqlite:///./esg_data.db"
+	}
+
+	if strings.HasPrefix(dsn, "sqlite") {
+		path := strings.TrimPrefix(dsn, "sqlite:///")
+		dialector = sqlite.Open(path)
 	} else {
 		dialector = postgres.Open(dsn)
 	}
@@ -48,10 +53,22 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// 테이블 초기화 (테스트용이므로 매번 초기화)
+	// 테이블 및 캐시 초기화
+	log.Println("Invalidating existing tables and cache...")
 	if err := db.Migrator().DropTable(&models.Company{}, &models.ESGMetric{}); err != nil {
-		log.Fatal(fmt.Errorf("failed to drop tables: %w", err))
+		log.Fatal(fmt.Errorf("failed to drop core tables: %w", err))
 	}
+	
+	// 캐시 아티팩트 제거 (Dialect에 따라 처리)
+	dialect := db.Dialector.Name()
+	if dialect == "postgres" {
+		db.Exec("DROP MATERIALIZED VIEW IF EXISTS mv_esg_summary_sector")
+		db.Exec("DROP MATERIALIZED VIEW IF EXISTS mv_top_companies")
+	} else {
+		db.Exec("DROP TABLE IF EXISTS mv_esg_summary_sector")
+		db.Exec("DROP TABLE IF EXISTS mv_top_companies")
+	}
+
 	if err := db.AutoMigrate(&models.Company{}, &models.ESGMetric{}); err != nil {
 		log.Fatal(fmt.Errorf("failed to auto migrate: %w", err))
 	}
@@ -114,10 +131,17 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// 헤더 인덱스 맵핑
+	// 헤더 인덱스 맵핑 (정규화 및 검증)
 	headerMap := make(map[string]int)
 	for i, name := range header {
-		headerMap[name] = i
+		// 공백 제거 및 소문자화 (BOM 등 예외 처리)
+		normalized := strings.ToLower(strings.TrimSpace(name))
+		headerMap[normalized] = i
+	}
+
+	tickerIdx, ok := headerMap["ticker"]
+	if !ok {
+		log.Fatal("missing required column: 'ticker'")
 	}
 
 	// 채널 설정 (Worker Pool 패턴)
@@ -176,7 +200,7 @@ func main() {
 			continue
 		}
 
-		ticker := strings.TrimSpace(record[headerMap["ticker"]])
+		ticker := strings.TrimSpace(record[tickerIdx])
 		if ticker == "" || seenTickers[ticker] {
 			continue
 		}
