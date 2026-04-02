@@ -1,128 +1,132 @@
 @coderabbitai[bot] commented on this pull request.
 
-Actionable comments posted: 8
+Actionable comments posted: 14
 
-Caution
-
-Some comments are outside the diff and can’t be posted inline due to platform limitations.
-
-⚠️ Outside diff range comments (1)
-backend/ingest_data.py (1)
-119-128: ⚠️ Potential issue | 🟠 Major
-
-unique_companies_df가 실제로는 중복을 제거하지 않습니다.
-
-여기서는 copy()만 하고 있어서, 입력 CSV에 같은 ticker가 두 번 이상 있으면 backend/models.py의 Company.ticker unique 제약 때문에 Line 128의 session.flush()가 실패합니다. 복제된 행에만 suffix를 붙이고 원본 중복은 그대로 두고 있어서 ingest가 입력 데이터에 따라 불안정합니다.
-
-수정 예시
--    unique_companies_df = df[['ticker', 'security_name', 'industry']].copy()
-+    unique_companies_df = (
-+        df[['ticker', 'security_name', 'industry']]
-+        .drop_duplicates(subset=['ticker'])
-+        .copy()
-+    )
-🤖 Prompt for AI Agents
-Verify each finding against the current code and only fix it if needed.
-
-In `@backend/ingest_data.py` around lines 119 - 128, unique_companies_df is not
-deduplicated (only copy() is called) so creating Company instances from
-company_records can violate the unique constraint on Company.ticker and cause
-session.flush() to fail; fix by de-duplicating unique_companies_df on the ticker
-column (e.g., drop_duplicates(subset='ticker', keep='first')) before converting
-to records and building Company(**rec) objects, and ensure any prior logic that
-appended suffixes does not produce duplicate ticker values before calling
-session.add_all and session.flush().
 🤖 Prompt for all review comments with AI agents
 Verify each finding against the current code and only fix it if needed.
 
 Inline comments:
-In `@backend/cache_utils.py`:
-- Around line 53-64: The refresh path (when is_refresh is True) assumes
-mv_esg_summary_sector and mv_top_companies already exist and fails on initial
-deployments; modify the is_refresh branch to first check existence of those
-materialized views (e.g., query pg_matviews or pg_class for
-mv_esg_summary_sector and mv_top_companies) before calling
-conn.execute(text("REFRESH MATERIALIZED VIEW ...")). If a view is missing, call
-or invoke the existing creation logic (the function that creates the
-materialized views / cache creation path used elsewhere) as a fallback, then
-proceed to refresh; replace the current unconditional raise on exception with
-logic that attempts create-if-missing and logs outcomes while avoiding an
-immediate 500 on first-run.
+In `@backend-go/ingest/ingest.go`:
+- Around line 105-123: The loop that reads CSV rows creates models.Company
+records and sends them to companyChan without deduplicating by Company.Ticker,
+causing unique constraint conflicts; modify the ingest loop (the code around
+reader.Read(), headerMap usage, and the models.Company creation) to normalize
+and dedupe tickers before sending: maintain a local set/map of seen tickers
+(e.g., seenTicker[string]bool), normalize the ticker string (trim whitespace and
+case if needed) when you extract ticker := record[headerMap["ticker"]], skip
+sending if seenTicker[ticker] is true, otherwise mark seenTicker[ticker]=true
+and send the company to companyChan and increment count. Ensure this dedupe
+logic is applied in the same scope that constructs models.Company and uses
+companyChan so duplicates never reach downstream insertion.
+- Around line 125-126: The hardcoded cutoff "if count >= 100 { break }" in
+ingest.go truncates ingestion to 100 rows despite the comment; change it to use
+a configurable env var (e.g., INGEST_ROW_LIMIT) read at startup (parsed as int)
+and apply the check only when the value > 0 so default behavior is "no limit"
+(or set default to 0/unlimited), replacing the direct use of the literal 100;
+update any related variable names (count, rowLimit) and ensure the check uses
+rowLimit > 0 && count >= rowLimit to preserve intended testing behavior.
+- Around line 117-120: The placeholder values in models.Company (constructed as
+comp in ingest.go) are causing all companies to be labeled as ticker + " Corp"
+and "Financial Services"; update the ingest logic to load and apply real
+security_name and industry mappings from sp500_components.csv (or reuse the
+existing Python ingest mapping) when constructing models.Company so that
+security_name and Industry fields are populated with CSV values instead of
+hardcoded placeholders; ensure the code that builds comp uses the CSV lookup (by
+ticker) before falling back to a sensible default and keep references consistent
+with models.Company, comp, and the CSV filename sp500_components.csv so the
+/sectors, /esg/summary and /esg/top-companies endpoints in backend-go/main.go
+reflect real data.
+- Line 15: Remove the unused import "github.com/schollz/progressbar/v3" from the
+import block in ingest.go; find the import line that references
+github.com/schollz/progressbar/v3 and delete it (or run goimports/gofmt to clean
+unused imports) so the package builds without the unused-progressbar compile
+error.
 
-In `@backend/ingest_data.py`:
-- Around line 146-149: The current loop calls session.commit() every 10 batches
-(session.commit()) while the script earlier truncates the target table, leaving
-partial data persisted if a later exception occurs because session.rollback()
-only reverts the last transaction; to fix, either remove the intermediate
-commits and perform a single session.commit() after the full load so the
-try/except rollback reverts the entire load, or implement a safe staging
-pattern: write batches (with optional commits) into a staging table, commit
-there, then atomically swap/rename the staging table into place (or perform a
-single transactional INSERT INTO target SELECT FROM staging and commit once),
-and ensure session.rollback() is relied on to undo failures; update the loop
-that currently calls session.commit() and the code that empties the target table
-to use the chosen approach (single final commit or staging table swap) and keep
-session.rollback() semantics correct.
-- Around line 103-109: The code can raise ZeroDivisionError when the input
-DataFrame is empty because original_len == 0 is used in the modulo; before the
-for loop that uses original_len (the block using original_len, df, max_companies
-and row_idx = i % original_len), add an explicit guard that checks if
-original_len == 0 and bail out early (e.g., log an informative message and
-return or raise a clear ValueError) so the function exits before attempting the
-modulo and avoids leaving state partially initialized.
-
-In `@backend/main.py`:
-- Around line 93-103: The handler currently only returns when "results" is
-truthy, causing None to be returned for empty query results; update the logic
-around the logger/info and SectorSummaryResponse construction so empty lists are
-returned as an empty list of SectorSummaryResponse instead of falling through to
-None. Specifically, in the block that references logger.info and constructs
-SectorSummaryResponse for each row, treat an empty results list as a valid
-result (e.g., remove the truthy-only guard or explicitly return [] when results
-== []) so the function always returns a list (possibly empty) rather than None.
-- Around line 202-206: The get_admin_key function currently uses a hardcoded
-default ("super-secret-admin-key") via os.getenv, allowing auth bypass when
-ADMIN_API_KEY is unset; change it to explicitly require the env var and fail
-fast: read ADMIN_API_KEY using os.environ or os.getenv then if it's None/empty
-raise an HTTPException (e.g., 500 with "Admin API key not configured"); then
-compare x_admin_key to that real expected value and raise 403 on mismatch; keep
-function name get_admin_key and the x_admin_key parameter unchanged so callers
-continue to work.
+In `@backend-go/main.go`:
+- Around line 177-190: The refreshCache handler currently spawns a goroutine
+that only sleeps and logs, so it never actually refreshes the materialized
+views; replace the noop with real DB refresh logic inside the goroutine: connect
+to your database (use the existing DB/sqlx/GORM client used elsewhere), execute
+the appropriate REFRESH MATERIALIZED VIEW statements for mv_esg_summary_sector
+and mv_top_companies (or run the SQL that rebuilds them), capture and log any
+errors, and ensure the goroutine context/transaction handling mirrors other DB
+calls (handle timeouts/cancellation) so the background job truly updates the
+cache rather than just sleeping.
+- Around line 69-73: 현재 미들웨어(r.Use anonymous func)에서
+Access-Control-Allow-Origin을 "*"로 고정하고 동시에 Access-Control-Allow-Credentials를
+"true"로 설정해 브라우저에서 차단됩니다; 수정 방법은 credentialed 요청에 대해 요청의 Origin을 반사(reflect)하도록
+바꾸고 Vary: Origin 헤더를 추가하거나, 자격증명(credentials)을 실제로 사용하지 않으면
+Access-Control-Allow-Credentials 헤더를 제거하는 것입니다. 구체적으로 익명 핸들러(func(c
+*gin.Context))에서 origin := c.Request.Header.Get("Origin")를 읽어 origin이 비어있지 않으면
+c.Writer.Header().Set("Access-Control-Allow-Origin", origin)로 설정하고
+c.Writer.Header().Set("Vary", "Origin")을 추가하고, 만약 자격증명을 지원하지 않는다면
+c.Writer.Header().Del("Access-Control-Allow-Credentials") 또는 해당 헤더를 설정하지 않도록
+변경하세요.
+- Around line 156-168: The endpoint currently orders by "total_score ASC" when
+building the query (see query.Order("total_score ASC") and
+manualQuery.Order("total_score ASC") that populate topCompanies/TopCompany),
+which returns the lowest scoring companies; change both ordering clauses to
+"total_score DESC" so the endpoint returns the top (highest-scoring) 10
+companies, ensuring the same DESC ordering is applied for both the cached/query
+path and the manualQuery fallback.
 
 In `@README.md`:
-- Line 111: README.md contains a typo: the phrase "lighting-fast" should be
-corrected to "lightning-fast"; locate the table cell containing "**3M Rows** |
-2,136.82 ms | **12.29 ms** | **7.35 ms** | Sub-10ms lighting-fast response
-achieved" and replace "lighting-fast" with "lightning-fast" so the sentence
-reads "Sub-10ms lightning-fast response achieved".
-- Around line 26-40: The README table header "Materialized View Cache" is
-misleading for the SQLite benchmark because SQLite used a cache-table fallback,
-not native MATERIALIZED VIEW; update the table header and any repeated labels
-(e.g., "Materialized View Cache") to something like "Cache Table (SQLite
-fallback)" or "Cache Table (Materialized View fallback)" so it clearly reflects
-the fallback strategy, and make the same label change in the corresponding
-paragraph(s) that reference the SQLite benchmark (the block that explains SQLite
-fallback behavior) to keep wording consistent.
-- Line 40: Replace the two overstated benchmark lines in README.md (the sentence
-starting "결과: 300만 건의 대규모 트래픽 쿼리를 ... 단 7ms(0.007초)로 99.9% 단축") and the similar
-sentence around line 122 with the actual measured values from the table: state
-the latency change as "2,136.82 ms → 7.35 ms" and compute and display the
-correct percentage reduction (or simply say "약 X% 단축" using the computed value),
-ensuring the text exactly matches the table entries and removes the phrasing "수십
-초" and the hardcoded "99.9% 단축".
+- Around line 66-68: Remove the duplicate Note block in README.md by keeping a
+single consolidated note that contains the full intended sentence ("데이터베이스 자체의
+Materialized View 조회 성능은 동일하나, Go의 가벼운 런타임과 동시성 모델 덕분에 다중 요청 상황에서 압도적인 병목 해소 능력을
+보여줍니다.") and remove the extra blank line between them so the markdownlint MD028
+violation is resolved; ensure only one Note block remains and the text exactly
+matches the desired message.
+- Around line 96-98: Update the README's frontend API URL examples to match the
+newly recommended Go server port (8080) and ensure consistency across all
+sections (the "6. 서버 실행 (Go - 권장)" block and the other referenced examples
+around lines 182-184); specifically, edit the .env.local example that currently
+shows "http://localhost:8000/api/v1" to either "http://localhost:8080/api/v1"
+when instructing to run the Go backend or provide both variants (Python:8000 and
+Go:8080) with clear labels so UI consumers using .env.local know which URL to
+set depending on whether they run main.go or the Python server. Ensure the
+README mentions the .env.local filename and the exact URL string to copy for
+each backend option.
+- Line 2: The badge <img> tags in README.md lack alt attributes which triggers
+markdownlint MD045 and fails accessibility checks; update each <img> tag (the
+badge images for Next.js, React, Tailwind CSS, React Query, FastAPI, Python, Go,
+PostgreSQL, Vercel, Render) to include a meaningful alt attribute (e.g.,
+alt="Next.js", alt="React", alt="Tailwind CSS", etc.) so screen readers and
+linters receive descriptive text for each badge.
 
----
+In `@scripts/benchmark.go`:
+- Around line 13-15: The default endpoint constant (endpoint) should match the
+backend-go default port (use :8080) and the average latency calculation must
+guard against dividing by zero: change the endpoint value from
+"http://localhost:9000/..." to the correct default (http://localhost:8080/...)
+and update the latency averaging logic (the block that computes Avg Latency
+using totalRequests/successfulRequests around variables totalRequests,
+successfulRequests, avgLatency) to use successfulRequests > 0 as the condition
+and divide by successfulRequests (not totalRequests), returning a sensible
+zero/placeholder when there are no successful requests.
+- Around line 28-38: The current use of stop := time.After(duration) gives a
+single-shot channel that only one goroutine will receive; replace it with a
+context with timeout so all workers observe cancellation: create ctx, cancel :=
+context.WithTimeout(context.Background(), duration) (and defer cancel()), then
+inside the worker goroutine use select { case <-ctx.Done(): return; default: ...
+} instead of selecting on stop; update any references to stop and ensure the
+goroutines read from ctx.Done() so all concurrentUsers exit when the timeout
+occurs.
+- Around line 39-52: The benchmarking loop uses http.Get without a timeout,
+checks resp.StatusCode without ensuring resp is non-nil, and performs
+io.Copy/resp.Body.Close while holding mu which serializes goroutines and can
+leak bodies; update the code around variables reqStart/resp/err/endpoint to use
+a custom http.Client with a reasonable Timeout, after the http call first check
+err and only then inspect resp, always ensure resp.Body is closed (e.g., defer
+resp.Body.Close() immediately after verifying resp != nil) and move
+io.Copy(io.Discard, resp.Body) and resp.Body.Close() outside the
+mu.Lock()/Unlock() critical section so you only update counters (totalRequests,
+errors, totalLatency) while holding mu.
+🪄 Autofix (Beta)
+Fix all unresolved CodeRabbit comments on this PR:
 
-Outside diff comments:
-In `@backend/ingest_data.py`:
-- Around line 119-128: unique_companies_df is not deduplicated (only copy() is
-called) so creating Company instances from company_records can violate the
-unique constraint on Company.ticker and cause session.flush() to fail; fix by
-de-duplicating unique_companies_df on the ticker column (e.g.,
-drop_duplicates(subset='ticker', keep='first')) before converting to records and
-building Company(**rec) objects, and ensure any prior logic that appended
-suffixes does not produce duplicate ticker values before calling session.add_all
-and session.flush().
+ Push a commit to this branch (recommended)
+ Create a new PR with the fixes
 ℹ️ Review info ⚙️ Run configuration
 Configuration used: Organization UI
 
@@ -130,373 +134,675 @@ Review profile: CHILL
 
 Plan: Pro
 
-Run ID: c1933321-19e3-45c6-908a-4d4a8150f43c
+Run ID: ff7ad6e3-0427-4283-b5fc-5558adc3ebbc
 
 📥 Commits
-Reviewing files that changed from the base of the PR and between 524aab7 and 612cc70.
+Reviewing files that changed from the base of the PR and between 3a5dd6d and 74190de.
 
-📒 Files selected for processing (5)
-.gitignore
+⛔ Files ignored due to path filters (1)
+backend-go/go.sum is excluded by !**/*.sum
+📒 Files selected for processing (6)
 README.md
-backend/cache_utils.py
-backend/ingest_data.py
-backend/main.py
-In backend/cache_utils.py:
+backend-go/go.mod
+backend-go/ingest/ingest.go
+backend-go/main.go
+backend-go/models/models.go
+scripts/benchmark.go
+In backend-go/ingest/ingest.go:
 
-> +        if is_refresh:
-+            # We attempt standard REFRESH. 
-+            # Note: CONCURRENTLY is removed here because execution in FastAPI often occurs 
-+            # within a session transaction block (autocommit=False) which blocks CONCURRENTLY.
-+            # Plain REFRESH takes an exclusive lock but reliably works in all contexts.
-+            try:
-+                conn.execute(text("REFRESH MATERIALIZED VIEW mv_esg_summary_sector"))
-+                conn.execute(text("REFRESH MATERIALIZED VIEW mv_top_companies"))
-+                logger.info("PostgreSQL Materialized Views refreshed successfully.")
-+            except Exception as e:
-+                logger.error(f"Failed to refresh Materialized Views: {e}")
-+                raise
-⚠️ Potential issue | 🟠 Major
-
-초기 상태의 refresh 요청이 바로 실패합니다.
-
-is_refresh=True 경로는 두 materialized view가 이미 있다고 가정합니다. 그래서 초기 배포, 스키마 재생성 직후, 또는 이전 캐시 생성이 실패한 상태에서 backend/main.py Line 222가 이 함수를 호출하면 /api/v1/system/refresh-cache가 복구 대신 500으로 끝납니다. refresh 전에 존재 여부를 확인하고, 없으면 create 경로로 폴백해야 합니다.
-
-🧰 Tools 🪛 Ruff (0.15.4)
-[warning] 63-63: Use logging.exception instead of logging.error
-
-Replace with exception
-
-(TRY400)
-
-🤖 Prompt for AI Agents
-Verify each finding against the current code and only fix it if needed.
-
-In `@backend/cache_utils.py` around lines 53 - 64, The refresh path (when
-is_refresh is True) assumes mv_esg_summary_sector and mv_top_companies already
-exist and fails on initial deployments; modify the is_refresh branch to first
-check existence of those materialized views (e.g., query pg_matviews or pg_class
-for mv_esg_summary_sector and mv_top_companies) before calling
-conn.execute(text("REFRESH MATERIALIZED VIEW ...")). If a view is missing, call
-or invoke the existing creation logic (the function that creates the
-materialized views / cache creation path used elsewhere) as a fallback, then
-proceed to refresh; replace the current unconditional raise on exception with
-logic that attempts create-if-missing and logs outcomes while avoiding an
-immediate 500 on first-run.
-In backend/ingest_data.py:
-
-> +    original_len = len(df)
-+    
-+    print(f"Original CSV has {original_len} rows. Target: {max_companies} companies.")
-     
--    # Handle duplicate tickers for the unique constraint
--    # We'll use ticker + row index if duplicate exists to keep them unique
--    df['ticker_orig'] = df['ticker']
--    df['ticker'] = df.groupby('ticker').cumcount().astype(str)
--    df['ticker'] = df.apply(lambda x: x['ticker_orig'] if x['ticker'] == '0' else f"{x['ticker_orig']}-{x['ticker']}", axis=1)
-+    for i in range(max_companies):
-+        row_idx = i % original_len
-+        row = df.iloc[row_idx].copy()
-⚠️ Potential issue | 🟡 Minor
-
-빈 입력 CSV에서 바로 ZeroDivisionError가 납니다.
-
-original_len이 0이면 Line 108의 modulo에서 즉시 예외가 납니다. 입력이 비었을 때는 루프 전에 명시적으로 중단해야 원인이 더 분명하고, 반쯤 초기화된 상태도 피할 수 있습니다.
-
-수정 예시
-     companies_data = []
-     original_len = len(df)
-+    if original_len == 0:
-+        print("No source rows found in preprocessed_content.csv. Ingestion cancelled.")
-+        return
-     
-     print(f"Original CSV has {original_len} rows. Target: {max_companies} companies.")
-📝 Committable suggestion
-‼️ IMPORTANT
-Carefully review the code before committing. Ensure that it accurately replaces the highlighted code, contains no missing lines, and has no issues with indentation. Thoroughly test & benchmark the code to ensure it meets the requirements.
-
-⬇️ Suggested change
--    original_len = len(df)
--    
--    print(f"Original CSV has {original_len} rows. Target: {max_companies} companies.")
--    
--    # Handle duplicate tickers for the unique constraint
--    # We'll use ticker + row index if duplicate exists to keep them unique
--    df['ticker_orig'] = df['ticker']
--    df['ticker'] = df.groupby('ticker').cumcount().astype(str)
--    df['ticker'] = df.apply(lambda x: x['ticker_orig'] if x['ticker'] == '0' else f"{x['ticker_orig']}-{x['ticker']}", axis=1)
--    for i in range(max_companies):
--        row_idx = i % original_len
--        row = df.iloc[row_idx].copy()
-+    original_len = len(df)
-+    if original_len == 0:
-+        print("No source rows found in preprocessed_content.csv. Ingestion cancelled.")
-+        return
-+    
-+    print(f"Original CSV has {original_len} rows. Target: {max_companies} companies.")
-+    
-+    for i in range(max_companies):
-+        row_idx = i % original_len
-+        row = df.iloc[row_idx].copy()
-🤖 Prompt for AI Agents
-Verify each finding against the current code and only fix it if needed.
-
-In `@backend/ingest_data.py` around lines 103 - 109, The code can raise
-ZeroDivisionError when the input DataFrame is empty because original_len == 0 is
-used in the modulo; before the for loop that uses original_len (the block using
-original_len, df, max_companies and row_idx = i % original_len), add an explicit
-guard that checks if original_len == 0 and bail out early (e.g., log an
-informative message and return or raise a clear ValueError) so the function
-exits before attempting the modulo and avoids leaving state partially
-initialized.
-In backend/ingest_data.py:
-
-> +            # Sub-commit every 10 batches to keep transaction log small and show progress on disk
-+            if (i // batch_size + 1) % 10 == 0:
-+                session.commit()
-+                print(f"    [OK] Progress: {total_metrics} rows committed.")
-⚠️ Potential issue | 🟠 Major
-
-중간 커밋 때문에 실패 시 반쯤 적재된 DB가 남습니다.
-
-이 스크립트는 Line 78에서 기존 테이블을 모두 비운 뒤 적재를 시작합니다. 그런데 10배치마다 커밋하면 이후 배치에서 예외가 나도 except의 rollback은 마지막 트랜잭션만 되돌리고, 앞선 배치들은 영구 반영된 채 남습니다. 전체 적재를 원자적으로 유지하거나, 정말 중간 커밋이 필요하면 staging table에 적재 후 최종 swap 하는 패턴이 더 안전합니다.
-
-🤖 Prompt for AI Agents
-Verify each finding against the current code and only fix it if needed.
-
-In `@backend/ingest_data.py` around lines 146 - 149, The current loop calls
-session.commit() every 10 batches (session.commit()) while the script earlier
-truncates the target table, leaving partial data persisted if a later exception
-occurs because session.rollback() only reverts the last transaction; to fix,
-either remove the intermediate commits and perform a single session.commit()
-after the full load so the try/except rollback reverts the entire load, or
-implement a safe staging pattern: write batches (with optional commits) into a
-staging table, commit there, then atomically swap/rename the staging table into
-place (or perform a single transactional INSERT INTO target SELECT FROM staging
-and commit once), and ensure session.rollback() is relied on to undo failures;
-update the loop that currently calls session.commit() and the code that empties
-the target table to use the chosen approach (single final commit or staging
-table swap) and keep session.rollback() semantics correct.
-In backend/main.py:
-
-> +        if results:
-+            logger.info(f"Cache Hit: Sector summary served from Materialized View (Rows: {len(results)})")
-+            return [
-+                SectorSummaryResponse(
-+                    sector=row["sector"],
-+                    avg_e_score=round(row["avg_e_score"] or 0, 2),
-+                    avg_s_score=round(row["avg_s_score"] or 0, 2),
-+                    avg_g_score=round(row["avg_g_score"] or 0, 2),
-+                    avg_total_score=round(row["avg_total_score"] or 0, 2)
-+                ) for row in results
-+            ]
-⚠️ Potential issue | 🟠 Major
-
-0건 조회 시 None이 반환됩니다.
-
-Line 93에서 빈 결과를 건너뛰기 때문에, 캐시 테이블은 존재하지만 조회 결과가 0건인 경우 함수가 그대로 끝납니다. 이 엔드포인트는 리스트를 반환해야 하므로 빈 리스트 대신 None이 나가면서 응답 검증 단계에서 실패합니다. 빈 결과도 정상 경로로 바로 반환해야 합니다.
-
-수정 예시
--        if results:
--            logger.info(f"Cache Hit: Sector summary served from Materialized View (Rows: {len(results)})")
--            return [
--                SectorSummaryResponse(
--                    sector=row["sector"],
--                    avg_e_score=round(row["avg_e_score"] or 0, 2),
--                    avg_s_score=round(row["avg_s_score"] or 0, 2),
--                    avg_g_score=round(row["avg_g_score"] or 0, 2),
--                    avg_total_score=round(row["avg_total_score"] or 0, 2)
--                ) for row in results
--            ]
-+        logger.info(f"Cache Hit: Sector summary served from Materialized View (Rows: {len(results)})")
-+        return [
-+            SectorSummaryResponse(
-+                sector=row["sector"],
-+                avg_e_score=round(row["avg_e_score"] or 0, 2),
-+                avg_s_score=round(row["avg_s_score"] or 0, 2),
-+                avg_g_score=round(row["avg_g_score"] or 0, 2),
-+                avg_total_score=round(row["avg_total_score"] or 0, 2)
-+            ) for row in results
-+        ]
-📝 Committable suggestion
-‼️ IMPORTANT
-Carefully review the code before committing. Ensure that it accurately replaces the highlighted code, contains no missing lines, and has no issues with indentation. Thoroughly test & benchmark the code to ensure it meets the requirements.
-
-⬇️ Suggested change
--        if results:
--            logger.info(f"Cache Hit: Sector summary served from Materialized View (Rows: {len(results)})")
--            return [
--                SectorSummaryResponse(
--                    sector=row["sector"],
--                    avg_e_score=round(row["avg_e_score"] or 0, 2),
--                    avg_s_score=round(row["avg_s_score"] or 0, 2),
--                    avg_g_score=round(row["avg_g_score"] or 0, 2),
--                    avg_total_score=round(row["avg_total_score"] or 0, 2)
--                ) for row in results
--            ]
-+        logger.info(f"Cache Hit: Sector summary served from Materialized View (Rows: {len(results)})")
-+        return [
-+            SectorSummaryResponse(
-+                sector=row["sector"],
-+                avg_e_score=round(row["avg_e_score"] or 0, 2),
-+                avg_s_score=round(row["avg_s_score"] or 0, 2),
-+                avg_g_score=round(row["avg_g_score"] or 0, 2),
-+                avg_total_score=round(row["avg_total_score"] or 0, 2)
-+            ) for row in results
-+        ]
-🤖 Prompt for AI Agents
-Verify each finding against the current code and only fix it if needed.
-
-In `@backend/main.py` around lines 93 - 103, The handler currently only returns
-when "results" is truthy, causing None to be returned for empty query results;
-update the logic around the logger/info and SectorSummaryResponse construction
-so empty lists are returned as an empty list of SectorSummaryResponse instead of
-falling through to None. Specifically, in the block that references logger.info
-and constructs SectorSummaryResponse for each row, treat an empty results list
-as a valid result (e.g., remove the truthy-only guard or explicitly return []
-when results == []) so the function always returns a list (possibly empty)
-rather than None.
-In backend/main.py:
-
-> +def get_admin_key(x_admin_key: str = Header(..., description="Administrator API Key")):
-+    expected_key = os.getenv("ADMIN_API_KEY", "super-secret-admin-key")
-+    if x_admin_key != expected_key:
-+        raise HTTPException(status_code=403, detail="Invalid admin key")
-+    return True
+> @@ -0,0 +1,168 @@
++package main
++
++import (
++	"encoding/csv"
++	"io"
++	"log"
++	"math/rand"
++	"os"
++	"strconv"
++	"sync"
++	"time"
++
++	"github.com/SanghunYun95/metricflow-esg/backend-go/models"
++	"github.com/joho/godotenv"
++	"github.com/schollz/progressbar/v3"
 ⚠️ Potential issue | 🔴 Critical
 
-기본 관리자 키는 사실상 인증 우회입니다.
+🧩 Analysis chain
+🏁 Script executed:
 
-Line 203의 기본값이 남아 있으면 ADMIN_API_KEY를 설정하지 않은 배포에서 누구나 알려진 문자열로 관리자 엔드포인트를 호출할 수 있습니다. 이 PR은 캐시 refresh를 외부 HTTP로 노출하므로, 기본값 대신 미설정 시 즉시 실패하도록 바꾸는 편이 안전합니다.
+# First, check if the file exists and read the import section
+head -30 backend-go/ingest/ingest.go | cat -n
+Repository: SanghunYun95/metricflow-esg
 
-수정 예시
- def get_admin_key(x_admin_key: str = Header(..., description="Administrator API Key")):
--    expected_key = os.getenv("ADMIN_API_KEY", "super-secret-admin-key")
-+    expected_key = os.getenv("ADMIN_API_KEY")
-+    if not expected_key:
-+        logger.error("ADMIN_API_KEY is not configured")
-+        raise HTTPException(status_code=503, detail="Admin authentication is not configured")
-     if x_admin_key != expected_key:
-         raise HTTPException(status_code=403, detail="Invalid admin key")
-     return True
+Length of output: 764
+
+🏁 Script executed:
+
+# Search for any usage of progressbar in the file
+rg "progressbar" backend-go/ingest/ingest.go
+Repository: SanghunYun95/metricflow-esg
+
+Length of output: 107
+
+🏁 Script executed:
+
+# Get the full length of the file to understand its scope
+wc -l backend-go/ingest/ingest.go
+Repository: SanghunYun95/metricflow-esg
+
+Length of output: 102
+
+progressbar import를 제거하세요.
+
+Line 15의 github.com/schollz/progressbar/v3 import는 파일 내에서 사용되지 않습니다. Go 컴파일러는 사용되지 않는 import를 오류로 처리하므로 현재 상태로는 ingest 바이너리가 빌드되지 않습니다.
+
 🤖 Prompt for AI Agents
 Verify each finding against the current code and only fix it if needed.
 
-In `@backend/main.py` around lines 202 - 206, The get_admin_key function currently
-uses a hardcoded default ("super-secret-admin-key") via os.getenv, allowing auth
-bypass when ADMIN_API_KEY is unset; change it to explicitly require the env var
-and fail fast: read ADMIN_API_KEY using os.environ or os.getenv then if it's
-None/empty raise an HTTPException (e.g., 500 with "Admin API key not
-configured"); then compare x_admin_key to that real expected value and raise 403
-on mismatch; keep function name get_admin_key and the x_admin_key parameter
-unchanged so callers continue to work.
+In `@backend-go/ingest/ingest.go` at line 15, Remove the unused import
+"github.com/schollz/progressbar/v3" from the import block in ingest.go; find the
+import line that references github.com/schollz/progressbar/v3 and delete it (or
+run goimports/gofmt to clean unused imports) so the package builds without the
+unused-progressbar compile error.
+In backend-go/ingest/ingest.go:
+
+> +	db.Migrator().DropTable(&models.Company{}, &models.ESGMetric{})
++	db.AutoMigrate(&models.Company{}, &models.ESGMetric{})
+⚠️ Potential issue | 🔴 Critical
+
+DB migration/write 에러를 모두 무시하면 성공 로그를 신뢰할 수 없습니다.
+
+지금은 DropTable, AutoMigrate, Create, CreateInBatches의 결과를 전부 버리고 있습니다. unique 제약이나 DB 장애가 나도 마지막에 Ingestion completed를 찍고, Create(&batch)가 실패한 뒤에도 generateMetrics가 계속 돌면서 후속 insert까지 오염시킬 수 있습니다.
+
+🛠️ 예시 수정안
+-db.Migrator().DropTable(&models.Company{}, &models.ESGMetric{})
+-db.AutoMigrate(&models.Company{}, &models.ESGMetric{})
++if err := db.Migrator().DropTable(&models.Company{}, &models.ESGMetric{}); err != nil {
++	log.Fatal(err)
++}
++if err := db.AutoMigrate(&models.Company{}, &models.ESGMetric{}); err != nil {
++	log.Fatal(err)
++}
+...
+-				if len(batch) >= 100 { // 컴퍼니는 개수가 적으므로 작은 단위로
+-					db.Create(&batch)
+-					// 각 컴퍼니에 대한 시뮬레이션 데이터 생성
+-					for _, c := range batch {
+-						generateMetrics(db, c.ID)
+-					}
++				if len(batch) >= 100 { // 컴퍼니는 개수가 적으므로 작은 단위로
++					if err := db.Create(&batch).Error; err != nil {
++						log.Printf("insert companies failed: %v", err)
++						batch = nil
++						continue
++					}
++					for _, c := range batch {
++						if err := generateMetrics(db, c.ID); err != nil {
++							log.Printf("insert metrics failed for company %d: %v", c.ID, err)
++						}
++					}
+ 					batch = nil
+ 				}
+...
+-func generateMetrics(db *gorm.DB, companyID uint) {
++func generateMetrics(db *gorm.DB, companyID uint) error {
+ 	...
+-	db.CreateInBatches(metrics, 60)
++	return db.CreateInBatches(metrics, 60).Error
+ }
+Also applies to: 87-100, 161-161
+
+In backend-go/ingest/ingest.go:
+
+> +	// 데이터 읽기 및 채널 전송
++	count := 0
++	for {
++		record, err := reader.Read()
++		if err == io.EOF {
++			break
++		}
++		if err != nil {
++			continue
++		}
++
++		ticker := record[headerMap["ticker"]]
++		comp := models.Company{
++			Ticker:       ticker,
++			SecurityName: ticker + " Corp", // 실제 데이터에서는 sp500_components.csv와 조인 필요
++			Industry:     "Financial Services", // 임시 섹터
++		}
++		companyChan <- comp
++		count++
+⚠️ Potential issue | 🟠 Major
+
+ticker 기준 dedupe 없이 company insert를 밀어 넣으면 unique 제약과 충돌합니다.
+
+Company.Ticker는 unique인데 여기서는 CSV row를 그대로 회사 레코드로 보내고 있습니다. Python ingest 쪽은 drop_duplicates(subset=['ticker'])를 먼저 하고 있어서, Go path도 같은 정규화를 하지 않으면 batch 전체가 실패하거나 적재 회사 수가 크게 줄어듭니다.
+
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@backend-go/ingest/ingest.go` around lines 105 - 123, The loop that reads CSV
+rows creates models.Company records and sends them to companyChan without
+deduplicating by Company.Ticker, causing unique constraint conflicts; modify the
+ingest loop (the code around reader.Read(), headerMap usage, and the
+models.Company creation) to normalize and dedupe tickers before sending:
+maintain a local set/map of seen tickers (e.g., seenTicker[string]bool),
+normalize the ticker string (trim whitespace and case if needed) when you
+extract ticker := record[headerMap["ticker"]], skip sending if
+seenTicker[ticker] is true, otherwise mark seenTicker[ticker]=true and send the
+company to companyChan and increment count. Ensure this dedupe logic is applied
+in the same scope that constructs models.Company and uses companyChan so
+duplicates never reach downstream insertion.
+In backend-go/ingest/ingest.go:
+
+> +		comp := models.Company{
++			Ticker:       ticker,
++			SecurityName: ticker + " Corp", // 실제 데이터에서는 sp500_components.csv와 조인 필요
++			Industry:     "Financial Services", // 임시 섹터
+⚠️ Potential issue | 🟠 Major
+
+placeholder 섹터/회사명 때문에 핵심 집계 API가 왜곡됩니다.
+
+모든 회사를 ticker + " Corp"와 "Financial Services"로 채우면 backend-go/main.go의 /sectors, /esg/summary, /esg/top-companies가 실제 데이터가 아니라 단일 섹터 샘플만 보게 됩니다. 최소한 CSV의 실제 security_name/industry를 읽거나 Python ingest처럼 sp500_components.csv 매핑을 재사용해야 합니다.
+
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@backend-go/ingest/ingest.go` around lines 117 - 120, The placeholder values
+in models.Company (constructed as comp in ingest.go) are causing all companies
+to be labeled as ticker + " Corp" and "Financial Services"; update the ingest
+logic to load and apply real security_name and industry mappings from
+sp500_components.csv (or reuse the existing Python ingest mapping) when
+constructing models.Company so that security_name and Industry fields are
+populated with CSV values instead of hardcoded placeholders; ensure the code
+that builds comp uses the CSV lookup (by ticker) before falling back to a
+sensible default and keep references consistent with models.Company, comp, and
+the CSV filename sp500_components.csv so the /sectors, /esg/summary and
+/esg/top-companies endpoints in backend-go/main.go reflect real data.
+In backend-go/ingest/ingest.go:
+
+> +		if count >= 100 { // 테스트를 위해 100개사만 진행 (실제로는 제한 없음)
++			break
+⚠️ Potential issue | 🟠 Major
+
+100개사 하드코딩 제한은 테스트용 주석과 실제 동작이 다릅니다.
+
+주석은 “실제로는 제한 없음”이라고 되어 있지만, Line 125-126 때문에 현재 ingest 결과는 항상 100개 회사에서 잘립니다. 이 상태로는 README의 50k/3M 시나리오나 Python 쪽 기본 ingest 규모를 재현할 수 없으니, row limit를 env로 빼거나 기본값을 전체 적재로 두는 편이 맞습니다.
+
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@backend-go/ingest/ingest.go` around lines 125 - 126, The hardcoded cutoff "if
+count >= 100 { break }" in ingest.go truncates ingestion to 100 rows despite the
+comment; change it to use a configurable env var (e.g., INGEST_ROW_LIMIT) read
+at startup (parsed as int) and apply the check only when the value > 0 so
+default behavior is "no limit" (or set default to 0/unlimited), replacing the
+direct use of the literal 100; update any related variable names (count,
+rowLimit) and ensure the check uses rowLimit > 0 && count >= rowLimit to
+preserve intended testing behavior.
+In backend-go/main.go:
+
+> +	r.Use(func(c *gin.Context) {
++		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
++		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
++		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
++		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
+⚠️ Potential issue | 🟠 Major
+
+Access-Control-Allow-Origin: * 와 Allow-Credentials: true를 같이 보내면 브라우저가 막습니다.
+
+credentialed CORS 요청에서는 wildcard origin을 쓸 수 없어서, 지금 조합은 브라우저 쪽에서 네트워크 에러로 처리됩니다. 특정 origin을 반사하면서 Vary: Origin을 추가하거나, credentials 지원이 필요 없으면 해당 헤더를 빼는 편이 안전합니다. (developer.mozilla.org)
+
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@backend-go/main.go` around lines 69 - 73, 현재 미들웨어(r.Use anonymous func)에서
+Access-Control-Allow-Origin을 "*"로 고정하고 동시에 Access-Control-Allow-Credentials를
+"true"로 설정해 브라우저에서 차단됩니다; 수정 방법은 credentialed 요청에 대해 요청의 Origin을 반사(reflect)하도록
+바꾸고 Vary: Origin 헤더를 추가하거나, 자격증명(credentials)을 실제로 사용하지 않으면
+Access-Control-Allow-Credentials 헤더를 제거하는 것입니다. 구체적으로 익명 핸들러(func(c
+*gin.Context))에서 origin := c.Request.Header.Get("Origin")를 읽어 origin이 비어있지 않으면
+c.Writer.Header().Set("Access-Control-Allow-Origin", origin)로 설정하고
+c.Writer.Header().Set("Vary", "Origin")을 추가하고, 만약 자격증명을 지원하지 않는다면
+c.Writer.Header().Del("Access-Control-Allow-Credentials") 또는 해당 헤더를 설정하지 않도록
+변경하세요.
+In backend-go/main.go:
+
+> +	err := query.Order("total_score ASC").Limit(10).Find(&topCompanies).Error
++	if err != nil {
++		log.Println("Cache miss or error, falling back to manual aggregation:", err)
++		manualQuery := db.Table("companies").
++			Select("companies.ticker, companies.security_name, AVG(esg_metrics.e_score) as e_score, AVG(esg_metrics.s_score) as s_score, AVG(esg_metrics.g_score) as g_score, AVG((esg_metrics.e_score + esg_metrics.s_score + esg_metrics.g_score) / 3.0) as total_score").
++			Joins("JOIN esg_metrics ON companies.id = esg_metrics.company_id").
++			Group("companies.ticker, companies.security_name")
++
++		if sector != "" {
++			manualQuery = manualQuery.Where("companies.industry = ?", sector)
++		}
++
++		if err := manualQuery.Order("total_score ASC").Limit(10).Scan(&topCompanies).Error; err != nil {
+⚠️ Potential issue | 🟠 Major
+
+top-companies 정렬 방향이 반대로 되어 있습니다.
+
+total_score ASC라서 현재 endpoint는 점수가 가장 높은 회사가 아니라 가장 낮은 10개 회사를 반환합니다. endpoint 이름과 TopCompany 모델 의미를 보면 여기서는 DESC가 맞습니다.
+
+🛠️ 예시 수정안
+-	err := query.Order("total_score ASC").Limit(10).Find(&topCompanies).Error
++	err := query.Order("total_score DESC").Limit(10).Find(&topCompanies).Error
+@@
+-		if err := manualQuery.Order("total_score ASC").Limit(10).Scan(&topCompanies).Error; err != nil {
++		if err := manualQuery.Order("total_score DESC").Limit(10).Scan(&topCompanies).Error; err != nil {
+ 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+ 			return
+ 		}
+📝 Committable suggestion
+‼️ IMPORTANT
+Carefully review the code before committing. Ensure that it accurately replaces the highlighted code, contains no missing lines, and has no issues with indentation. Thoroughly test & benchmark the code to ensure it meets the requirements.
+
+⬇️ Suggested change
+-	err := query.Order("total_score ASC").Limit(10).Find(&topCompanies).Error
+-	if err != nil {
+-		log.Println("Cache miss or error, falling back to manual aggregation:", err)
+-		manualQuery := db.Table("companies").
+-			Select("companies.ticker, companies.security_name, AVG(esg_metrics.e_score) as e_score, AVG(esg_metrics.s_score) as s_score, AVG(esg_metrics.g_score) as g_score, AVG((esg_metrics.e_score + esg_metrics.s_score + esg_metrics.g_score) / 3.0) as total_score").
+-			Joins("JOIN esg_metrics ON companies.id = esg_metrics.company_id").
+-			Group("companies.ticker, companies.security_name")
+-
+-		if sector != "" {
+-			manualQuery = manualQuery.Where("companies.industry = ?", sector)
+-		}
+-
+-		if err := manualQuery.Order("total_score ASC").Limit(10).Scan(&topCompanies).Error; err != nil {
++	err := query.Order("total_score DESC").Limit(10).Find(&topCompanies).Error
++	if err != nil {
++		log.Println("Cache miss or error, falling back to manual aggregation:", err)
++		manualQuery := db.Table("companies").
++			Select("companies.ticker, companies.security_name, AVG(esg_metrics.e_score) as e_score, AVG(esg_metrics.s_score) as s_score, AVG(esg_metrics.g_score) as g_score, AVG((esg_metrics.e_score + esg_metrics.s_score + esg_metrics.g_score) / 3.0) as total_score").
++			Joins("JOIN esg_metrics ON companies.id = esg_metrics.company_id").
++			Group("companies.ticker, companies.security_name")
++
++		if sector != "" {
++			manualQuery = manualQuery.Where("companies.industry = ?", sector)
++		}
++
++		if err := manualQuery.Order("total_score DESC").Limit(10).Scan(&topCompanies).Error; err != nil {
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@backend-go/main.go` around lines 156 - 168, The endpoint currently orders by
+"total_score ASC" when building the query (see query.Order("total_score ASC")
+and manualQuery.Order("total_score ASC") that populate topCompanies/TopCompany),
+which returns the lowest scoring companies; change both ordering clauses to
+"total_score DESC" so the endpoint returns the top (highest-scoring) 10
+companies, ensuring the same DESC ordering is applied for both the cached/query
+path and the manualQuery fallback.
+In backend-go/main.go:
+
+> +func refreshCache(c *gin.Context) {
++	// Go의 강점: 고루틴을 활용한 논블로킹 백그라운드 처리
++	go func() {
++		log.Println("Background cache refresh started...")
++		// 실제 상용 환경에서는 여기서 DB Dialect에 따라 REFRESH MATERIALIZED VIEW 등을 실행
++		// 여기서는 간단히 로그로 대체하거나 로직 구현 가능
++		time.Sleep(2 * time.Second) // 시뮬레이션
++		log.Println("Background cache refresh completed.")
++	}()
++
++	c.JSON(http.StatusAccepted, gin.H{
++		"status":  "accepted",
++		"message": "Cache refresh started in the background (Goroutine)",
++	})
+⚠️ Potential issue | 🟠 Major
+
+refresh-cache가 실제 캐시를 전혀 갱신하지 않습니다.
+
+현재 handler는 goroutine 안에서 Sleep과 로그만 남기고 끝납니다. 이 PR 안에는 mv_esg_summary_sector / mv_top_companies를 생성·갱신하는 코드가 따로 없어서, 클라이언트는 202를 받더라도 캐시 상태가 실제로 바뀌지 않습니다.
+
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@backend-go/main.go` around lines 177 - 190, The refreshCache handler
+currently spawns a goroutine that only sleeps and logs, so it never actually
+refreshes the materialized views; replace the noop with real DB refresh logic
+inside the goroutine: connect to your database (use the existing DB/sqlx/GORM
+client used elsewhere), execute the appropriate REFRESH MATERIALIZED VIEW
+statements for mv_esg_summary_sector and mv_top_companies (or run the SQL that
+rebuilds them), capture and log any errors, and ensure the goroutine
+context/transaction handling mirrors other DB calls (handle
+timeouts/cancellation) so the background job truly updates the cache rather than
+just sleeping.
 In README.md:
 
-> +| 데이터 규모 | 콜드 스타트 (초기 로드) | 2회차 요청 (Materialized View 캐시) | 3회차 요청 (핫 히트) | 비고 |
-+| :--- | :--- | :--- | :--- | :--- |
-+| **5만 건** (기존) | 1,213 ms | 56.28 ms | 17.69 ms | 현재 라이브 서비스 수준 |
-+| **300만 건** | 2,136.82 ms | **12.29 ms** | **7.35 ms** | 10ms 이하의 쾌적한 속도 달성 |
-+
-+> 💡 **차세대 아키텍처: 구체화된 뷰 (Materialized View) 도입 전략**
-+> 
-+> 대규모 데이터를 매번 `JOIN`, `GROUP BY`로 집계하면 사용자가 늘어날수록 급격한 지연(Latency)이 발생합니다. 이를 극복하기 위해 비용이 드는 외부 인프라(Upstash Redis 등)를 추가하는 대신, 자체 데이터베이스 성능을 극대화하는 **구체화된 뷰(Materialized View)**를 아키텍처에 도입했습니다.
-+>
-+> 1. **PostgreSQL (운영 및 권장 환경):**
-+>    DB에서 공식 지원하는 `MATERIALIZED VIEW` 문법을 활용합니다. 무거운 집계 결과를 디스크에 물리적인 테이블 형태로 저장하여, 쿼리 시 원본 테이블을 뒤지지 않고 이미 완성된 '단일 뷰 테이블'만 읽어오므로 수억 건의 데이터에서도 매우 빠른 조회 속도를 보장합니다.
-+> 2. **SQLite (로컬 벤치마크 환경):**
-+>    이동성과 편의성을 위해 로컬 테스트용으로 SQLite를 사용했습니다. 단, SQLite는 구체화된 뷰 문법을 공식 지원하지 않습니다. 따라서 백엔드 튜닝을 통해 **주기적으로 집계 결과를 갱신하는 일반 테이블(Cache Table)** 전략을 사용하여 PostgreSQL의 구체화된 뷰와 동일하게 동작하도록 유연한 Fallback 코드를 시뮬레이션했습니다.
-+> 
-+> **결과:** 300만 건의 대규모 트래픽 쿼리를 기존 수십 초 수준에서 **단 7ms(0.007초)**로 99.9% 단축하여 B2B 엔터프라이즈 환경에서도 지연 없는 초고속 대시보드를 성공적으로 구축했습니다.
+> @@ -1,5 +1,5 @@
+ # MetricFlow ESG Dashboard
+-<img src="https://img.shields.io/badge/Next.js-000000?style=flat-square&logo=nextdotjs&logoColor=white"><img src="https://img.shields.io/badge/React-61DAFB?style=flat-square&logo=react&logoColor=black"><img src="https://img.shields.io/badge/Tailwind%20CSS-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white"><img src="https://img.shields.io/badge/React%20Query-FF4154?style=flat-square&logo=reactquery&logoColor=white"><img src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white"><img src="https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white"><img src="https://img.shields.io/badge/PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white"><img src="https://img.shields.io/badge/Vercel-000000?style=flat-square&logo=vercel&logoColor=white"><img src="https://img.shields.io/badge/Render-46E3B7?style=flat-square&logo=render&logoColor=white">
++<img src="https://img.shields.io/badge/Next.js-000000?style=flat-square&logo=nextdotjs&logoColor=white"><img src="https://img.shields.io/badge/React-61DAFB?style=flat-square&logo=react&logoColor=black"><img src="https://img.shields.io/badge/Tailwind%20CSS-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white"><img src="https://img.shields.io/badge/React%20Query-FF4154?style=flat-square&logo=reactquery&logoColor=white"><img src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white"><img src="https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white"><img src="https://img.shields.io/badge/Go-00ADD8?style=flat-square&logo=go&logoColor=white"><img src="https://img.shields.io/badge/PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white"><img src="https://img.shields.io/badge/Vercel-000000?style=flat-square&logo=vercel&logoColor=white"><img src="https://img.shields.io/badge/Render-46E3B7?style=flat-square&logo=render&logoColor=white">
 ⚠️ Potential issue | 🟡 Minor
 
-SQLite 벤치마크에 Materialized View 용어를 직접 붙이면 오해 소지가 있습니다.
+배지 이미지에 대체 텍스트를 추가해 주세요.
 
-이 섹션은 Line 24/106에서 SQLite 로컬 벤치마크라고 설명하고, 본문에서는 SQLite가 native materialized view를 지원하지 않아 cache table fallback을 썼다고 명시합니다. 그런데 표 헤더는 Materialized View Cache로 적혀 있어 실제 측정 대상이 PostgreSQL의 native materialized view였던 것처럼 읽힙니다. 표 라벨을 fallback 전략 기준으로 바꾸는 게 더 정확합니다.
+Line 2의 <img> 태그들이 모두 alt 없이 들어가 있어서 markdownlint(MD045)가 계속 실패하고, 스크린리더에도 기술 스택 정보가 전달되지 않습니다.
 
-수정 예시
--| 데이터 규모 | 콜드 스타트 (초기 로드) | 2회차 요청 (Materialized View 캐시) | 3회차 요청 (핫 히트) | 비고 |
-+| 데이터 규모 | 콜드 스타트 (초기 로드) | 2회차 요청 (사전 계산 캐시/Cache Table) | 3회차 요청 (핫 히트) | 비고 |
+🧰 Tools 🪛 markdownlint-cli2 (0.22.0)
+[warning] 2-2: Images should have alternate text (alt text)
 
--| Data Scope | Cold Start (Initial Load) | 2nd Request (Materialized View Cache) | 3rd Request (Hot Hit) | Note |
-+| Data Scope | Cold Start (Initial Load) | 2nd Request (Precomputed Cache / Cache Table) | 3rd Request (Hot Hit) | Note |
-Also applies to: 108-122
+(MD045, no-alt-text)
+
+[warning] 2-2: Images should have alternate text (alt text)
+
+(MD045, no-alt-text)
+
+[warning] 2-2: Images should have alternate text (alt text)
+
+(MD045, no-alt-text)
+
+[warning] 2-2: Images should have alternate text (alt text)
+
+(MD045, no-alt-text)
+
+[warning] 2-2: Images should have alternate text (alt text)
+
+(MD045, no-alt-text)
+
+[warning] 2-2: Images should have alternate text (alt text)
+
+(MD045, no-alt-text)
+
+[warning] 2-2: Images should have alternate text (alt text)
+
+(MD045, no-alt-text)
+
+[warning] 2-2: Images should have alternate text (alt text)
+
+(MD045, no-alt-text)
+
+[warning] 2-2: Images should have alternate text (alt text)
+
+(MD045, no-alt-text)
+
+[warning] 2-2: Images should have alternate text (alt text)
+
+(MD045, no-alt-text)
 
 🤖 Prompt for AI Agents
 Verify each finding against the current code and only fix it if needed.
 
-In `@README.md` around lines 26 - 40, The README table header "Materialized View
-Cache" is misleading for the SQLite benchmark because SQLite used a cache-table
-fallback, not native MATERIALIZED VIEW; update the table header and any repeated
-labels (e.g., "Materialized View Cache") to something like "Cache Table (SQLite
-fallback)" or "Cache Table (Materialized View fallback)" so it clearly reflects
-the fallback strategy, and make the same label change in the corresponding
-paragraph(s) that reference the SQLite benchmark (the block that explains SQLite
-fallback behavior) to keep wording consistent.
+In `@README.md` at line 2, The badge <img> tags in README.md lack alt attributes
+which triggers markdownlint MD045 and fails accessibility checks; update each
+<img> tag (the badge images for Next.js, React, Tailwind CSS, React Query,
+FastAPI, Python, Go, PostgreSQL, Vercel, Render) to include a meaningful alt
+attribute (e.g., alt="Next.js", alt="React", alt="Tailwind CSS", etc.) so screen
+readers and linters receive descriptive text for each badge.
 In README.md:
 
-> +
-+| 데이터 규모 | 콜드 스타트 (초기 로드) | 2회차 요청 (Materialized View 캐시) | 3회차 요청 (핫 히트) | 비고 |
-+| :--- | :--- | :--- | :--- | :--- |
-+| **5만 건** (기존) | 1,213 ms | 56.28 ms | 17.69 ms | 현재 라이브 서비스 수준 |
-+| **300만 건** | 2,136.82 ms | **12.29 ms** | **7.35 ms** | 10ms 이하의 쾌적한 속도 달성 |
+> +> **Note:** 데이터베이스 자체의 Materialized View 조회 성능은 동일하나, Go의 가벼운 런타임과 고루틴 동시성 모델 덕분에 다중 요청 상황에서 압도적인 병목 해소 능력을 보여줍니다. (실제 300만 건 대상 테스트는 TODO 진행 예정)
 +
-+> 💡 **차세대 아키텍처: 구체화된 뷰 (Materialized View) 도입 전략**
-+> 
-+> 대규모 데이터를 매번 `JOIN`, `GROUP BY`로 집계하면 사용자가 늘어날수록 급격한 지연(Latency)이 발생합니다. 이를 극복하기 위해 비용이 드는 외부 인프라(Upstash Redis 등)를 추가하는 대신, 자체 데이터베이스 성능을 극대화하는 **구체화된 뷰(Materialized View)**를 아키텍처에 도입했습니다.
-+>
-+> 1. **PostgreSQL (운영 및 권장 환경):**
-+>    DB에서 공식 지원하는 `MATERIALIZED VIEW` 문법을 활용합니다. 무거운 집계 결과를 디스크에 물리적인 테이블 형태로 저장하여, 쿼리 시 원본 테이블을 뒤지지 않고 이미 완성된 '단일 뷰 테이블'만 읽어오므로 수억 건의 데이터에서도 매우 빠른 조회 속도를 보장합니다.
-+> 2. **SQLite (로컬 벤치마크 환경):**
-+>    이동성과 편의성을 위해 로컬 테스트용으로 SQLite를 사용했습니다. 단, SQLite는 구체화된 뷰 문법을 공식 지원하지 않습니다. 따라서 백엔드 튜닝을 통해 **주기적으로 집계 결과를 갱신하는 일반 테이블(Cache Table)** 전략을 사용하여 PostgreSQL의 구체화된 뷰와 동일하게 동작하도록 유연한 Fallback 코드를 시뮬레이션했습니다.
-+> 
-+> **결과:** 300만 건의 대규모 트래픽 쿼리를 기존 수십 초 수준에서 **단 7ms(0.007초)**로 99.9% 단축하여 B2B 엔터프라이즈 환경에서도 지연 없는 초고속 대시보드를 성공적으로 구축했습니다.
++> **Note:** 데이터베이스 자체의 Materialized View 조회 성능은 동일하나, Go의 가벼운 런타임과 동시성 모델 덕분에 다중 요청 상황에서 압도적인 병목 해소 능력을 보여줍니다.
 ⚠️ Potential issue | 🟡 Minor
 
-벤치마크 요약 수치를 표와 맞춰 주세요.
+중복 Note 블록을 하나로 합쳐 주세요.
 
-Line 40과 Line 122의 설명은 현재 표와 수치가 맞지 않습니다. 표 기준으로는 2,136.82 ms → 7.35 ms라서 “수십 초 → 7ms”, “99.9% 단축”으로 읽히면 과장으로 보일 수 있습니다. README 신뢰도를 위해 측정값 그대로 표현하는 편이 안전합니다.
+Line 66과 Line 68의 메시지가 사실상 동일하고, 그 사이 빈 줄 때문에 markdownlint(MD028)도 같이 깨집니다.
 
-수정 예시
-- **결과:** 300만 건의 대규모 트래픽 쿼리를 기존 수십 초 수준에서 **단 7ms(0.007초)**로 99.9% 단축하여 B2B 엔터프라이즈 환경에서도 지연 없는 초고속 대시보드를 성공적으로 구축했습니다.
-+ **결과:** 300만 건 규모의 집계 쿼리를 기준으로 초기 로드 `2,136.82 ms`에서 핫 히트 `7.35 ms`까지 단축했으며, 약 99.7% 수준의 응답 시간 개선을 확인했습니다.
+🧰 Tools 🪛 markdownlint-cli2 (0.22.0)
+[warning] 67-67: Blank line inside blockquote
 
-- **Result:** Large-scale 3M traffic queries were slashed by 99.9% from tens of seconds down to **just 7ms (0.007 sec)**, successfully building a zero-latency ultra-fast dashboard suitable for enterprise B2B environments.
-+ **Result:** For 3M-row aggregation queries, response time dropped from `2,136.82 ms` on initial load to `7.35 ms` on hot hits, which is roughly a 99.7% improvement in this benchmark.
-Also applies to: 122-122
+(MD028, no-blanks-blockquote)
 
 🤖 Prompt for AI Agents
 Verify each finding against the current code and only fix it if needed.
 
-In `@README.md` at line 40, Replace the two overstated benchmark lines in
-README.md (the sentence starting "결과: 300만 건의 대규모 트래픽 쿼리를 ... 단 7ms(0.007초)로
-99.9% 단축") and the similar sentence around line 122 with the actual measured
-values from the table: state the latency change as "2,136.82 ms → 7.35 ms" and
-compute and display the correct percentage reduction (or simply say "약 X% 단축"
-using the computed value), ensuring the text exactly matches the table entries
-and removes the phrasing "수십 초" and the hardcoded "99.9% 단축".
+In `@README.md` around lines 66 - 68, Remove the duplicate Note block in README.md
+by keeping a single consolidated note that contains the full intended sentence
+("데이터베이스 자체의 Materialized View 조회 성능은 동일하나, Go의 가벼운 런타임과 동시성 모델 덕분에 다중 요청 상황에서
+압도적인 병목 해소 능력을 보여줍니다.") and remove the extra blank line between them so the
+markdownlint MD028 violation is resolved; ensure only one Note block remains and
+the text exactly matches the desired message.
 In README.md:
 
-> @@ -80,6 +102,25 @@ This project is a dashboard that analyzes and visualizes ESG data for S&P 500 co
- 2. **Backend Aggregation Query Tuning (API Latency Reduction)**
-    Rather than loading all data into memory for calculation in the FastAPI backend, tuned aggregation queries at the database level using SQLAlchemy's `func.avg` and `GROUP BY`. This prevented Out-Of-Memory (OOM) errors and resolved dashboard loading delays.
+> +# 6. 서버 실행 (Go - 권장)
++cd ../backend-go
++go run main.go
+⚠️ Potential issue | 🟠 Major
+
+Go 실행 절차를 추가했으면 프론트엔드 API URL 예시도 같이 맞춰야 합니다.
+
+지금 README는 Go 서버를 권장하면서도 프론트엔드 .env.local 예시는 계속 http://localhost:8000/api/v1를 가리킵니다. 사용자가 새 절차대로 Go 서버를 8080에서 띄우면 UI는 여전히 Python 포트를 호출해서 로컬 실행 흐름이 바로 깨집니다.
+
+Also applies to: 182-184
+
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@README.md` around lines 96 - 98, Update the README's frontend API URL
+examples to match the newly recommended Go server port (8080) and ensure
+consistency across all sections (the "6. 서버 실행 (Go - 권장)" block and the other
+referenced examples around lines 182-184); specifically, edit the .env.local
+example that currently shows "http://localhost:8000/api/v1" to either
+"http://localhost:8080/api/v1" when instructing to run the Go backend or provide
+both variants (Python:8000 and Go:8080) with clear labels so UI consumers using
+.env.local know which URL to set depending on whether they run main.go or the
+Python server. Ensure the README mentions the .env.local filename and the exact
+URL string to copy for each backend option.
+In scripts/benchmark.go:
+
+> +	const concurrentUsers = 50
++	const duration = 10 * time.Second
++	const endpoint = "http://localhost:9000/api/v1/esg/summary" // Python/Go 타겟 주소에 따라 수정
+⚠️ Potential issue | 🟠 Major
+
+기본 endpoint와 평균 latency 계산이 all-error 케이스를 깨뜨립니다.
+
+backend-go/main.go 기본 포트는 8080인데 여기 기본값은 9000이라 그대로 실행하면 전부 실패하기 쉽습니다. 그 상태에서 Line 61-64는 성공 요청 수가 0이어도 totalRequests > 0만 검사해서 Avg Latency가 Inf/NaN으로 무너집니다.
+
+Also applies to: 61-64
+
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@scripts/benchmark.go` around lines 13 - 15, The default endpoint constant
+(endpoint) should match the backend-go default port (use :8080) and the average
+latency calculation must guard against dividing by zero: change the endpoint
+value from "http://localhost:9000/..." to the correct default
+(http://localhost:8080/...) and update the latency averaging logic (the block
+that computes Avg Latency using totalRequests/successfulRequests around
+variables totalRequests, successfulRequests, avgLatency) to use
+successfulRequests > 0 as the condition and divide by successfulRequests (not
+totalRequests), returning a sensible zero/placeholder when there are no
+successful requests.
+In scripts/benchmark.go:
+
+> +	stop := time.After(duration)
++	
++	for i := 0; i < concurrentUsers; i++ {
++		wg.Add(1)
++		go func() {
++			defer wg.Done()
++			for {
++				select {
++				case <-stop:
++					return
++				default:
+⚠️ Potential issue | 🔴 Critical
+
+🧩 Analysis chain
+🏁 Script executed:
+
+find . -name "benchmark.go" -type f
+Repository: SanghunYun95/metricflow-esg
+
+Length of output: 93
+
+🏁 Script executed:
+
+cat -n scripts/benchmark.go | head -60
+Repository: SanghunYun95/metricflow-esg
+
+Length of output: 1574
+
+🏁 Script executed:
+
+# Verify Go's time.After channel behavior documentation
+curl -s "https://pkg.go.dev/time?tab=doc" | grep -A 10 "func After" || echo "Will verify from general Go knowledge"
+Repository: SanghunYun95/metricflow-esg
+
+Length of output: 108
+
+🌐 Web query:
+
+Go context.Done() channel closed behavior multiple goroutines
+
+💡 Result:
+
+In Go, the context.Done channel is safe for use by multiple goroutines. When a context is canceled (via its cancel function or timeout/deadline), the Done channel is closed once, and all goroutines selecting on or receiving from it will immediately detect the closure and proceed. Key behaviors: - The same Context instance (and its single Done channel) can be passed to multiple goroutines safely. - Closing happens asynchronously but is atomic; multiple goroutines calling cancel are safe—only the first has effect, subsequent calls do nothing. - Receiving from a closed Done channel always succeeds immediately, returning the zero value for struct{} (nil), allowing all waiting goroutines to exit promptly without race conditions or panics. - Goroutines typically use select statements to check ctx.Done alongside other operations, ensuring cooperative cancellation. Example pattern for multiple goroutines: ctx, cancel := context.WithCancel(context.Background) var wg sync.WaitGroup wg.Add(2) go func { defer wg.Done for { select { case <-ctx.Done: return default: // do work } } } go func { defer wg.Done // similar loop } go func { // some time later cancel // closes Done once; both goroutines detect it } wg.Wait This prevents goroutine leaks and enables graceful shutdowns. Never close ctx.Done yourself—it's managed internally by the context package.
+
+Citations:
+
+1: https://pkg.go.dev/context@go1.21rc4
+2: https://pkg.go.dev/context?tab=doc
+3: https://pkg.go.dev/context
+4: https://pkg.go.dev/context@go1.25.6
+5: https://oneuptime.com/blog/post/2026-01-25-gracefully-cancel-goroutines-context-go/view
+6: https://oneuptime.com/blog/post/2026-01-23-go-context-cancellation/view
+7: https://oneuptime.com/blog/post/2026-01-30-go-context-request-cancellation/view
+8: https://stackoverflow.com/questions/61007385/golang-pattern-to-kill-multiple-goroutines-at-once
+공유된 time.After 채널은 한 개의 worker에만 신호를 전달합니다.
+
+time.After는 정확히 하나의 값을 채널에 전송하는 일회용 타이머입니다. 모든 50개 goroutine이 동일한 stop 채널을 선택할 때, 오직 하나의 goroutine만 신호를 수신하고 나머지 49개는 default 경로로 계속 실행되어 wg.Wait()이 무한 대기하게 됩니다. 정확한 동시 취소가 필요한 경우 context.WithCancel() 또는 context.WithTimeout()을 사용해야 합니다. 채널이 닫히면 모든 수신자가 즉시 깨어나기 때문입니다.
+
+🛠️ 수정 방법
++import "context"
++
+ func main() {
+ 	// 50명의 동시 사용자가 10초간 요청
+ 	const concurrentUsers = 50
+ 	const duration = 10 * time.Second
+ 	const endpoint = "http://localhost:9000/api/v1/esg/summary" // Python/Go 타겟 주소에 따라 수정
+@@
+-	stop := time.After(duration)
++	ctx, cancel := context.WithTimeout(context.Background(), duration)
++	defer cancel()
+ 	
+ 	for i := 0; i < concurrentUsers; i++ {
+ 		wg.Add(1)
+ 		go func() {
+ 			defer wg.Done()
+ 			for {
+ 				select {
+-				case <-stop:
++				case <-ctx.Done():
+ 					return
+ 				default:
+📝 Committable suggestion
+‼️ IMPORTANT
+Carefully review the code before committing. Ensure that it accurately replaces the highlighted code, contains no missing lines, and has no issues with indentation. Thoroughly test & benchmark the code to ensure it meets the requirements.
+
+⬇️ Suggested change
+-	stop := time.After(duration)
+-	
+-	for i := 0; i < concurrentUsers; i++ {
+-		wg.Add(1)
+-		go func() {
+-			defer wg.Done()
+-			for {
+-				select {
+-				case <-stop:
+-					return
+-				default:
++	ctx, cancel := context.WithTimeout(context.Background(), duration)
++	defer cancel()
++	
++	for i := 0; i < concurrentUsers; i++ {
++		wg.Add(1)
++		go func() {
++			defer wg.Done()
++			for {
++				select {
++				case <-ctx.Done():
++					return
++				default:
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@scripts/benchmark.go` around lines 28 - 38, The current use of stop :=
+time.After(duration) gives a single-shot channel that only one goroutine will
+receive; replace it with a context with timeout so all workers observe
+cancellation: create ctx, cancel := context.WithTimeout(context.Background(),
+duration) (and defer cancel()), then inside the worker goroutine use select {
+case <-ctx.Done(): return; default: ... } instead of selecting on stop; update
+any references to stop and ensure the goroutines read from ctx.Done() so all
+concurrentUsers exit when the timeout occurs.
+In scripts/benchmark.go:
+
+> +					reqStart := time.Now()
++					resp, err := http.Get(endpoint)
++					latency := time.Since(reqStart)
++
++					mu.Lock()
++					totalRequests++
++					if err != nil || resp.StatusCode != 200 {
++						errors++
++					} else {
++						totalLatency += latency
++						io.Copy(io.Discard, resp.Body)
++						resp.Body.Close()
++					}
++					mu.Unlock()
+⚠️ Potential issue | 🔴 Critical
+
+🧩 Analysis chain
+🏁 Script executed:
+
+cat -n scripts/benchmark.go | head -80
+Repository: SanghunYun95/metricflow-esg
+
+Length of output: 2062
+
+응답 정리와 timeout 처리가 벤치마크를 왜곡하고 리소스 누수를 일으킵니다.
+
+http.Get는 timeout이 없는 DefaultClient를 사용하고, 실패 응답이나 non-200 상태에서는 resp.Body를 닫지 않습니다. 또한 줄 49-50의 io.Copy/Close가 mutex 내부에서 실행되어 50개의 동시 고루틴이 순차적으로 대기하게 되므로 벤치마크 결과가 왜곡됩니다. 더 심각하게는 줄 45에서 err != nil일 때 resp.StatusCode에 접근하면 nil 역참조 패닉이 발생합니다.
+
+🛠️ 수정안
+ func main() {
+ 	// 50명의 동시 사용자가 10초간 요청
+ 	const concurrentUsers = 50
+ 	const duration = 10 * time.Second
+ 	const endpoint = "http://localhost:9000/api/v1/esg/summary" // Python/Go 타겟 주소에 따라 수정
++	client := &http.Client{Timeout: 5 * time.Second}
+@@
+-					resp, err := http.Get(endpoint)
++					resp, err := client.Get(endpoint)
+ 					latency := time.Since(reqStart)
++
++					if resp != nil {
++						io.Copy(io.Discard, resp.Body)
++						resp.Body.Close()
++					}
  
-+### 📈 Large-scale Traffic Stress Test & Tuning Metrics
-+Tested performance limits of aggregation queries (GROUP BY, ORDER BY) in a local environment (SQLite) to simulate actual B2B environments.
-+
-+| Data Scope | Cold Start (Initial Load) | 2nd Request (Materialized View Cache) | 3rd Request (Hot Hit) | Note |
-+| :--- | :--- | :--- | :--- | :--- |
-+| **50k Rows** (Current) | 1,213 ms | 56.28 ms | 17.69 ms | Current Live Service Level |
-+| **3M Rows** | 2,136.82 ms | **12.29 ms** | **7.35 ms** | Sub-10ms lighting-fast response achieved |
-⚠️ Potential issue | 🟡 Minor
-
-영문 문구 오타를 수정해 주세요.
-
-Line 111의 lighting-fast는 lightning-fast가 맞습니다.
-
+ 					mu.Lock()
+ 					totalRequests++
+-					if err != nil || resp.StatusCode != 200 {
++					if err != nil || resp.StatusCode != http.StatusOK {
+ 						errors++
+ 					} else {
+ 						totalLatency += latency
+-						io.Copy(io.Discard, resp.Body)
+-						resp.Body.Close()
+ 					}
+ 					mu.Unlock()
 🤖 Prompt for AI Agents
 Verify each finding against the current code and only fix it if needed.
 
-In `@README.md` at line 111, README.md contains a typo: the phrase "lighting-fast"
-should be corrected to "lightning-fast"; locate the table cell containing "**3M
-Rows** | 2,136.82 ms | **12.29 ms** | **7.35 ms** | Sub-10ms lighting-fast
-response achieved" and replace "lighting-fast" with "lightning-fast" so the
-sentence reads "Sub-10ms lightning-fast response achieved".
+In `@scripts/benchmark.go` around lines 39 - 52, The benchmarking loop uses
+http.Get without a timeout, checks resp.StatusCode without ensuring resp is
+non-nil, and performs io.Copy/resp.Body.Close while holding mu which serializes
+goroutines and can leak bodies; update the code around variables
+reqStart/resp/err/endpoint to use a custom http.Client with a reasonable
+Timeout, after the http call first check err and only then inspect resp, always
+ensure resp.Body is closed (e.g., defer resp.Body.Close() immediately after
+verifying resp != nil) and move io.Copy(io.Discard, resp.Body) and
+resp.Body.Close() outside the mu.Lock()/Unlock() critical section so you only
+update counters (totalRequests, errors, totalLatency) while holding mu.

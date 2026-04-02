@@ -2,17 +2,18 @@ package main
 
 import (
 	"encoding/csv"
+	"fmt"
 	"io"
 	"log"
 	"math/rand"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/SanghunYun95/metricflow-esg/backend-go/models"
 	"github.com/joho/godotenv"
-	"github.com/schollz/progressbar/v3"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -48,8 +49,44 @@ func main() {
 	}
 
 	// 테이블 초기화 (테스트용이므로 매번 초기화)
-	db.Migrator().DropTable(&models.Company{}, &models.ESGMetric{})
-	db.AutoMigrate(&models.Company{}, &models.ESGMetric{})
+	if err := db.Migrator().DropTable(&models.Company{}, &models.ESGMetric{}); err != nil {
+		log.Fatal(fmt.Errorf("failed to drop tables: %w", err))
+	}
+	if err := db.AutoMigrate(&models.Company{}, &models.ESGMetric{}); err != nil {
+		log.Fatal(fmt.Errorf("failed to auto migrate: %w", err))
+	}
+
+	// S&P 500 컴포넌트 정보 로드 (명칭, 섹터 매핑용)
+	compMappingFile, err := os.Open("../backend/sp500_components.csv")
+	var compNameMap = make(map[string]string)
+	var compSectorMap = make(map[string]string)
+	if err == nil {
+		defer compMappingFile.Close()
+		cReader := csv.NewReader(compMappingFile)
+		cHeader, _ := cReader.Read()
+		cHMap := make(map[string]int)
+		for i, name := range cHeader {
+			cHMap[name] = i
+		}
+		for {
+			cRec, cErr := cReader.Read()
+			if cErr != nil {
+				break
+			}
+			t := strings.TrimSpace(cRec[cHMap["Symbol"]])
+			compNameMap[t] = cRec[cHMap["Security"]]
+			compSectorMap[t] = cRec[cHMap["GICS Sector"]]
+		}
+	} else {
+		log.Printf("Warning: sp500_components.csv not found, using defaults: %v", err)
+	}
+
+	rowLimit := 0
+	if limitStr := os.Getenv("INGEST_ROW_LIMIT"); limitStr != "" {
+		if val, err := strconv.Atoi(limitStr); err == nil {
+			rowLimit = val
+		}
+	}
 
 	// CSV 읽기
 	file, err := os.Open("../preprocessed_content.csv")
@@ -85,18 +122,29 @@ func main() {
 			for comp := range companyChan {
 				batch = append(batch, comp)
 				if len(batch) >= 100 { // 컴퍼니는 개수가 적으므로 작은 단위로
-					db.Create(&batch)
+					if err := db.Create(&batch).Error; err != nil {
+						log.Printf("insert companies failed: %v", err)
+						batch = nil
+						continue
+					}
 					// 각 컴퍼니에 대한 시뮬레이션 데이터 생성
 					for _, c := range batch {
-						generateMetrics(db, c.ID)
+						if err := generateMetrics(db, c.ID); err != nil {
+							log.Printf("insert metrics failed for company %d: %v", c.ID, err)
+						}
 					}
 					batch = nil
 				}
 			}
 			if len(batch) > 0 {
-				db.Create(&batch)
-				for _, c := range batch {
-					generateMetrics(db, c.ID)
+				if err := db.Create(&batch).Error; err != nil {
+					log.Printf("insert final batch companies failed: %v", err)
+				} else {
+					for _, c := range batch {
+						if err := generateMetrics(db, c.ID); err != nil {
+							log.Printf("insert final metrics failed for company %d: %v", c.ID, err)
+						}
+					}
 				}
 			}
 		}()
@@ -104,6 +152,7 @@ func main() {
 
 	// 데이터 읽기 및 채널 전송
 	count := 0
+	seenTickers := make(map[string]bool)
 	for {
 		record, err := reader.Read()
 		if err == io.EOF {
@@ -113,16 +162,30 @@ func main() {
 			continue
 		}
 
-		ticker := record[headerMap["ticker"]]
+		ticker := strings.TrimSpace(record[headerMap["ticker"]])
+		if ticker == "" || seenTickers[ticker] {
+			continue
+		}
+		seenTickers[ticker] = true
+
+		name := compNameMap[ticker]
+		if name == "" {
+			name = ticker + " Corp"
+		}
+		sector := compSectorMap[ticker]
+		if sector == "" {
+			sector = "Financial Services"
+		}
+
 		comp := models.Company{
 			Ticker:       ticker,
-			SecurityName: ticker + " Corp", // 실제 데이터에서는 sp500_components.csv와 조인 필요
-			Industry:     "Financial Services", // 임시 섹터
+			SecurityName: name,
+			Industry:     sector,
 		}
 		companyChan <- comp
 		count++
-		
-		if count >= 100 { // 테스트를 위해 100개사만 진행 (실제로는 제한 없음)
+
+		if rowLimit > 0 && count >= rowLimit {
 			break
 		}
 	}
@@ -133,7 +196,7 @@ func main() {
 	log.Printf("Time taken: %v", time.Since(start))
 }
 
-func generateMetrics(db *gorm.DB, companyID uint) {
+func generateMetrics(db *gorm.DB, companyID uint) error {
 	var metrics []models.ESGMetric
 	currentE, currentS, currentG := 50.0+rand.Float64()*40, 50.0+rand.Float64()*40, 50.0+rand.Float64()*40
 	
@@ -158,7 +221,7 @@ func generateMetrics(db *gorm.DB, companyID uint) {
 			CarbonEmissions: 1000 + rand.Float64()*4000,
 		})
 	}
-	db.CreateInBatches(metrics, 60)
+	return db.CreateInBatches(metrics, 60).Error
 }
 
 func clamp(v float64) float64 {

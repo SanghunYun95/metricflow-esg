@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,7 +13,7 @@ func main() {
 	// 50명의 동시 사용자가 10초간 요청
 	const concurrentUsers = 50
 	const duration = 10 * time.Second
-	const endpoint = "http://localhost:9000/api/v1/esg/summary" // Python/Go 타겟 주소에 따라 수정
+	const endpoint = "http://localhost:8080/api/v1/esg/summary" // Go 서버 포트인 8080으로 수정
 
 	fmt.Printf("Starting benchmark on %s\n", endpoint)
 	fmt.Printf("Users: %d, Duration: %v\n", concurrentUsers, duration)
@@ -23,9 +24,15 @@ func main() {
 
 	totalRequests := 0
 	totalLatency := time.Duration(0)
+	successfulRequests := 0
 	errors := 0
 
-	stop := time.After(duration)
+	ctx, cancel := context.WithTimeout(context.Background(), duration)
+	defer cancel()
+
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+	}
 	
 	for i := 0; i < concurrentUsers; i++ {
 		wg.Add(1)
@@ -33,21 +40,25 @@ func main() {
 			defer wg.Done()
 			for {
 				select {
-				case <-stop:
+				case <-ctx.Done():
 					return
 				default:
 					reqStart := time.Now()
-					resp, err := http.Get(endpoint)
+					resp, err := client.Get(endpoint)
 					latency := time.Since(reqStart)
+
+					if resp != nil {
+						io.Copy(io.Discard, resp.Body)
+						resp.Body.Close()
+					}
 
 					mu.Lock()
 					totalRequests++
-					if err != nil || resp.StatusCode != 200 {
+					if err != nil || resp == nil || resp.StatusCode != 200 {
 						errors++
 					} else {
+						successfulRequests++
 						totalLatency += latency
-						io.Copy(io.Discard, resp.Body)
-						resp.Body.Close()
 					}
 					mu.Unlock()
 				}
@@ -59,8 +70,8 @@ func main() {
 	elapsed := time.Since(start)
 
 	avgLatency := float64(0)
-	if totalRequests > 0 {
-		avgLatency = float64(totalLatency.Milliseconds()) / float64(totalRequests-errors)
+	if successfulRequests > 0 {
+		avgLatency = float64(totalLatency.Milliseconds()) / float64(successfulRequests)
 	}
 	rps := float64(totalRequests) / elapsed.Seconds()
 

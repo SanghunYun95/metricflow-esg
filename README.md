@@ -1,5 +1,5 @@
 # MetricFlow ESG Dashboard
-<img src="https://img.shields.io/badge/Next.js-000000?style=flat-square&logo=nextdotjs&logoColor=white"><img src="https://img.shields.io/badge/React-61DAFB?style=flat-square&logo=react&logoColor=black"><img src="https://img.shields.io/badge/Tailwind%20CSS-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white"><img src="https://img.shields.io/badge/React%20Query-FF4154?style=flat-square&logo=reactquery&logoColor=white"><img src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white"><img src="https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white"><img src="https://img.shields.io/badge/Go-00ADD8?style=flat-square&logo=go&logoColor=white"><img src="https://img.shields.io/badge/PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white"><img src="https://img.shields.io/badge/Vercel-000000?style=flat-square&logo=vercel&logoColor=white"><img src="https://img.shields.io/badge/Render-46E3B7?style=flat-square&logo=render&logoColor=white">
+<img src="https://img.shields.io/badge/Next.js-000000?style=flat-square&logo=nextdotjs&logoColor=white" alt="Next.js"><img src="https://img.shields.io/badge/React-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React"><img src="https://img.shields.io/badge/Tailwind%20CSS-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white" alt="Tailwind CSS"><img src="https://img.shields.io/badge/React%20Query-FF4154?style=flat-square&logo=reactquery&logoColor=white" alt="React Query"><img src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI"><img src="https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python"><img src="https://img.shields.io/badge/Go-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go"><img src="https://img.shields.io/badge/PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL"><img src="https://img.shields.io/badge/Vercel-000000?style=flat-square&logo=vercel&logoColor=white" alt="Vercel"><img src="https://img.shields.io/badge/Render-46E3B7?style=flat-square&logo=render&logoColor=white" alt="Render">
 
 > ⚠️ **안내사항 (Cold Start)**
 > 본 프로젝트의 백엔드 서버는 무료 클라우드 인스턴스에 배포되어 운영 중입니다. 일정 시간 요청이 없으면 서버가 휴면 상태로 전환되므로, **최초 접속 시 (Cold start) 백엔드 응답까지 약 1분 정도의 대기 시간이 발생**할 수 있습니다. 
@@ -63,9 +63,7 @@
 | **초당 처리량 (Max RPS)** | 1,024 RPS | **3,850 RPS** | **약 3.7배 향상** |
 | **메모리 점유율 (Idle)** | ~120 MB | **~15 MB** | **87% 절감** |
 
-> **Note:** 데이터베이스 자체의 Materialized View 조회 성능은 동일하나, Go의 가벼운 런타임과 고루틴 동시성 모델 덕분에 다중 요청 상황에서 압도적인 병목 해소 능력을 보여줍니다. (실제 300만 건 대상 테스트는 TODO 진행 예정)
-
-> **Note:** 데이터베이스 자체의 Materialized View 조회 성능은 동일하나, Go의 가벼운 런타임과 동시성 모델 덕분에 다중 요청 상황에서 압도적인 병목 해소 능력을 보여줍니다.
+> **Note:** 데이터베이스 자체의 Materialized View 조회 성능은 동일하나, Go의 가벼운 런타임과 동시성 모델 덕분에 다중 요청 상황에서 압도적인 병목 해소 능력을 보여줍니다. (실제 300만 건 대상 테스트는 TODO 진행 예정)
 
 ### 🛠 기술 스택 (Tech Stack)
 - **Frontend:** Next.js (App Router), React, Tailwind CSS v4, React Query, Recharts, Axios
@@ -108,7 +106,9 @@ npm install
 
 # 3. 환경 변수 설정
 # .env.local 파일을 만들고 다음을 추가하세요.
-# NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
+# Python 백엔드 사용 시: NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
+# Go 백엔드 사용 시 (권장): NEXT_PUBLIC_API_URL=http://localhost:8080/api/v1
+NEXT_PUBLIC_API_URL=http://localhost:8080/api/v1
 
 # 4. 개발 서버 실행
 npm run dev
@@ -189,5 +189,8 @@ go run main.go
 cd frontend
 npm install
 # Set NEXT_PUBLIC_API_URL in .env.local
+# Python: http://localhost:8000/api/v1
+# Go (Recommended): http://localhost:8080/api/v1
+NEXT_PUBLIC_API_URL=http://localhost:8080/api/v1
 npm run dev
 ```

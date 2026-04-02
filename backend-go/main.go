@@ -67,7 +67,13 @@ func main() {
 
 	// CORS Setup
 	r.Use(func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := c.Request.Header.Get("Origin")
+		if origin != "" {
+			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+			c.Writer.Header().Set("Vary", "Origin")
+		} else {
+			c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		}
 		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
@@ -153,7 +159,7 @@ func getTopCompanies(c *gin.Context) {
 		query = query.Where("sector = ?", sector)
 	}
 
-	err := query.Order("total_score ASC").Limit(10).Find(&topCompanies).Error
+	err := query.Order("total_score DESC").Limit(10).Find(&topCompanies).Error
 	if err != nil {
 		log.Println("Cache miss or error, falling back to manual aggregation:", err)
 		manualQuery := db.Table("companies").
@@ -165,7 +171,7 @@ func getTopCompanies(c *gin.Context) {
 			manualQuery = manualQuery.Where("companies.industry = ?", sector)
 		}
 
-		if err := manualQuery.Order("total_score ASC").Limit(10).Scan(&topCompanies).Error; err != nil {
+		if err := manualQuery.Order("total_score DESC").Limit(10).Scan(&topCompanies).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -178,9 +184,21 @@ func refreshCache(c *gin.Context) {
 	// Go의 강점: 고루틴을 활용한 논블로킹 백그라운드 처리
 	go func() {
 		log.Println("Background cache refresh started...")
-		// 실제 상용 환경에서는 여기서 DB Dialect에 따라 REFRESH MATERIALIZED VIEW 등을 실행
-		// 여기서는 간단히 로그로 대체하거나 로직 구현 가능
-		time.Sleep(2 * time.Second) // 시뮬레이션
+		// Materialized View 갱신 로직 (Postgres 기준)
+		dialect := db.Dialector.Name()
+		if dialect == "postgres" {
+			// REFRESH MATERIALIZED VIEW 실행 (동시성 확보를 위해 CONCURRENTLY 사용 권장이나 초기엔 아닐 수 있으므로 일반 실행 병행)
+			if err := db.Exec("REFRESH MATERIALIZED VIEW mv_esg_summary_sector").Error; err != nil {
+				log.Printf("Error refreshing mv_esg_summary_sector: %v", err)
+			}
+			if err := db.Exec("REFRESH MATERIALIZED VIEW mv_top_companies").Error; err != nil {
+				log.Printf("Error refreshing mv_top_companies: %v", err)
+			}
+		} else {
+			// SQLite 등에서는 View나 캐시 테이블 재구조화 로직 필요 (여기선 로그만)
+			time.Sleep(1 * time.Second)
+			log.Println("Background cache refresh simulated for non-postgres dialect.")
+		}
 		log.Println("Background cache refresh completed.")
 	}()
 
