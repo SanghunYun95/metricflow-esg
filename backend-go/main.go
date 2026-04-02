@@ -204,23 +204,29 @@ func refreshCache(c *gin.Context) {
 	go func() {
 		defer isRefreshing.Store(false)
 		log.Println("Background cache refresh started...")
-		// Materialized View 갱신 로직 (Postgres 기준)
+		
+		sectorQuery := `SELECT c.industry AS sector, AVG(m.e_score) AS avg_e_score, AVG(m.s_score) AS avg_s_score, AVG(m.g_score) AS avg_g_score, AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS avg_total_score FROM companies c JOIN esg_metrics m ON c.id = m.company_id WHERE c.industry IS NOT NULL AND c.industry != 'Unknown' GROUP BY c.industry`
+		topQuery := `SELECT c.ticker, c.security_name, c.industry AS sector, AVG(m.e_score) AS e_score, AVG(m.s_score) AS s_score, AVG(m.g_score) AS g_score, AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS total_score FROM companies c JOIN esg_metrics m ON c.id = m.company_id GROUP BY c.ticker, c.security_name, c.industry`
+
 		dialect := db.Dialector.Name()
 		if dialect == "postgres" {
-			// REFRESH MATERIALIZED VIEW 실행 (동시성 확보를 위해 CONCURRENTLY 사용 권장이나 초기엔 아닐 수 있으므로 일반 실행 병행)
+			// Postgres: 만약 View가 존재하지 않으면 생성, 존재하면 REFRESH (idempotent)
+			// REFRESH MATERIALIZED VIEW가 실패하면 CREATE 시도
 			if err := db.Exec("REFRESH MATERIALIZED VIEW mv_esg_summary_sector").Error; err != nil {
-				log.Printf("Error refreshing mv_esg_summary_sector: %v", err)
+				log.Println("Warning: mv_esg_summary_sector refresh failed, trying to create:", err)
+				if err := db.Exec("CREATE MATERIALIZED VIEW mv_esg_summary_sector AS " + sectorQuery).Error; err != nil {
+					log.Printf("Error creating mv_esg_summary_sector (Postgres): %v", err)
+				}
 			}
 			if err := db.Exec("REFRESH MATERIALIZED VIEW mv_top_companies").Error; err != nil {
-				log.Printf("Error refreshing mv_top_companies: %v", err)
+				log.Println("Warning: mv_top_companies refresh failed, trying to create:", err)
+				if err := db.Exec("CREATE MATERIALIZED VIEW mv_top_companies AS " + topQuery).Error; err != nil {
+					log.Printf("Error creating mv_top_companies (Postgres): %v", err)
+				}
 			}
 		} else {
 			// SQLite: 캐시 테이블 DROP 및 재성성 (MatView 에뮬레이션)
 			log.Println("Rebuilding cache tables for SQLite...")
-			
-			sectorQuery := `SELECT c.industry AS sector, AVG(m.e_score) AS avg_e_score, AVG(m.s_score) AS avg_s_score, AVG(m.g_score) AS avg_g_score, AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS avg_total_score FROM companies c JOIN esg_metrics m ON c.id = m.company_id WHERE c.industry IS NOT NULL AND c.industry != 'Unknown' GROUP BY c.industry`
-			topQuery := `SELECT c.ticker, c.security_name, c.industry AS sector, AVG(m.e_score) AS e_score, AVG(m.s_score) AS s_score, AVG(m.g_score) AS g_score, AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS total_score FROM companies c JOIN esg_metrics m ON c.id = m.company_id GROUP BY c.ticker, c.security_name, c.industry`
-			
 			db.Exec("DROP TABLE IF EXISTS mv_esg_summary_sector")
 			db.Exec("DROP TABLE IF EXISTS mv_top_companies")
 			

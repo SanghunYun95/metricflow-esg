@@ -158,7 +158,7 @@ func main() {
 			var batch []models.Company
 			for comp := range companyChan {
 				batch = append(batch, comp)
-				if len(batch) >= 100 { // 컴퍼니는 개수가 적으므로 작은 단위로
+				if len(batch) >= BatchSize { // BatchSize 상수를 사용하여 배치 처리
 					if err := db.Create(&batch).Error; err != nil {
 						log.Printf("insert companies failed: %v", err)
 						batch = nil
@@ -212,7 +212,7 @@ func main() {
 		}
 		sector := compSectorMap[ticker]
 		if sector == "" {
-			sector = "Financial Services"
+			sector = "Unknown"
 		}
 
 		comp := models.Company{
