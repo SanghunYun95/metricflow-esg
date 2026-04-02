@@ -62,11 +62,19 @@ func main() {
 	// 캐시 아티팩트 제거 (Dialect에 따라 처리)
 	dialect := db.Dialector.Name()
 	if dialect == "postgres" {
-		db.Exec("DROP MATERIALIZED VIEW IF EXISTS mv_esg_summary_sector")
-		db.Exec("DROP MATERIALIZED VIEW IF EXISTS mv_top_companies")
+		if err := db.Exec("DROP MATERIALIZED VIEW IF EXISTS mv_esg_summary_sector").Error; err != nil {
+			log.Printf("Warning: failed to drop mv_esg_summary_sector: %v", err)
+		}
+		if err := db.Exec("DROP MATERIALIZED VIEW IF EXISTS mv_top_companies").Error; err != nil {
+			log.Printf("Warning: failed to drop mv_top_companies: %v", err)
+		}
 	} else {
-		db.Exec("DROP TABLE IF EXISTS mv_esg_summary_sector")
-		db.Exec("DROP TABLE IF EXISTS mv_top_companies")
+		if err := db.Exec("DROP TABLE IF EXISTS mv_esg_summary_sector").Error; err != nil {
+			log.Printf("Warning: failed to drop mv_esg_summary_sector: %v", err)
+		}
+		if err := db.Exec("DROP TABLE IF EXISTS mv_top_companies").Error; err != nil {
+			log.Printf("Warning: failed to drop mv_top_companies: %v", err)
+		}
 	}
 
 	if err := db.AutoMigrate(&models.Company{}, &models.ESGMetric{}); err != nil {
@@ -74,7 +82,11 @@ func main() {
 	}
 
 	// S&P 500 컴포넌트 정보 로드 (명칭, 섹터 매핑용)
-	compMappingFile, err := os.Open("../backend/sp500_components.csv")
+	compPath := os.Getenv("COMPONENTS_CSV_PATH")
+	if compPath == "" {
+		compPath = "../backend/sp500_components.csv"
+	}
+	compMappingFile, err := os.Open(compPath)
 	var compNameMap = make(map[string]string)
 	var compSectorMap = make(map[string]string)
 	if err == nil {
@@ -119,9 +131,13 @@ func main() {
 	}
 
 	// CSV 읽기
-	file, err := os.Open("../preprocessed_content.csv")
+	csvPath := os.Getenv("INGEST_CSV_PATH")
+	if csvPath == "" {
+		csvPath = "../preprocessed_content.csv"
+	}
+	file, err := os.Open(csvPath)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("failed to open ingest CSV at %s: %v", csvPath, err)
 	}
 	defer file.Close()
 

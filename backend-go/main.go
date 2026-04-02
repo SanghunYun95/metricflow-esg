@@ -97,7 +97,7 @@ func main() {
 
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "8000"
 	}
 
 	log.Printf("Server starting on port %s", port)
@@ -227,8 +227,12 @@ func refreshCache(c *gin.Context) {
 		} else {
 			// SQLite: 캐시 테이블 DROP 및 재성성 (MatView 에뮬레이션)
 			log.Println("Rebuilding cache tables for SQLite...")
-			db.Exec("DROP TABLE IF EXISTS mv_esg_summary_sector")
-			db.Exec("DROP TABLE IF EXISTS mv_top_companies")
+			if err := db.Exec("DROP TABLE IF EXISTS mv_esg_summary_sector").Error; err != nil {
+				log.Printf("Warning: failed to drop mv_esg_summary_sector: %v", err)
+			}
+			if err := db.Exec("DROP TABLE IF EXISTS mv_top_companies").Error; err != nil {
+				log.Printf("Warning: failed to drop mv_top_companies: %v", err)
+			}
 			
 			if err := db.Exec("CREATE TABLE mv_esg_summary_sector AS " + sectorQuery).Error; err != nil {
 				log.Printf("Error creating mv_esg_summary_sector (SQLite): %v", err)
