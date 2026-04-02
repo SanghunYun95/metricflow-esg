@@ -1,4 +1,5 @@
 # MetricFlow ESG Dashboard
+<img src="https://img.shields.io/badge/Next.js-000000?style=flat-square&logo=nextdotjs&logoColor=white"><img src="https://img.shields.io/badge/React-61DAFB?style=flat-square&logo=react&logoColor=black"><img src="https://img.shields.io/badge/Tailwind%20CSS-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white"><img src="https://img.shields.io/badge/React%20Query-FF4154?style=flat-square&logo=reactquery&logoColor=white"><img src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white"><img src="https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white"><img src="https://img.shields.io/badge/PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white"><img src="https://img.shields.io/badge/Vercel-000000?style=flat-square&logo=vercel&logoColor=white"><img src="https://img.shields.io/badge/Render-46E3B7?style=flat-square&logo=render&logoColor=white">
 
 > ⚠️ **안내사항 (Cold Start)**
 > 본 프로젝트의 백엔드 서버는 무료 클라우드 인스턴스에 배포되어 운영 중입니다. 일정 시간 요청이 없으면 서버가 휴면 상태로 전환되므로, **최초 접속 시 (Cold start) 백엔드 응답까지 약 1분 정도의 대기 시간이 발생**할 수 있습니다. 
@@ -8,6 +9,12 @@
 
 <video src="https://github.com/user-attachments/assets/ca395a60-4186-48ab-8748-28f1b7b4e760" autoplay loop muted playsinline width="100%">
 </video>
+
+---
+
+## 📝 TODO
+
+- [ ] **Go 언어로 변환**: 현재 Python(FastAPI) 기반인 백엔드를 Go 언어로 포팅하여 성능 최적화 및 동시성 처리 강화
 
 ## 🇰🇷 프로젝트 소개 (Project Overview)
 이 프로젝트는 S&P 500 기업의 ESG 데이터를 분석하고 시각화하는 대시보드입니다. 대용량 데이터의 안정적인 처리와 사용자 경험 최적화에 중점을 두고 개발되었습니다.
