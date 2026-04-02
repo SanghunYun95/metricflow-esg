@@ -74,7 +74,6 @@ func main() {
 		} else {
 			c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		}
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
 
@@ -195,9 +194,22 @@ func refreshCache(c *gin.Context) {
 				log.Printf("Error refreshing mv_top_companies: %v", err)
 			}
 		} else {
-			// SQLite 등에서는 View나 캐시 테이블 재구조화 로직 필요 (여기선 로그만)
-			time.Sleep(1 * time.Second)
-			log.Println("Background cache refresh simulated for non-postgres dialect.")
+			// SQLite: 캐시 테이블 DROP 및 재성성 (MatView 에뮬레이션)
+			log.Println("Rebuilding cache tables for SQLite...")
+			
+			sectorQuery := `SELECT c.industry AS sector, AVG(m.e_score) AS avg_e_score, AVG(m.s_score) AS avg_s_score, AVG(m.g_score) AS avg_g_score, AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS avg_total_score FROM companies c JOIN esg_metrics m ON c.id = m.company_id WHERE c.industry IS NOT NULL AND c.industry != 'Unknown' GROUP BY c.industry`
+			topQuery := `SELECT c.ticker, c.security_name, c.industry AS sector, AVG(m.e_score) AS e_score, AVG(m.s_score) AS s_score, AVG(m.g_score) AS g_score, AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS total_score FROM companies c JOIN esg_metrics m ON c.id = m.company_id GROUP BY c.ticker, c.security_name, c.industry`
+			
+			db.Exec("DROP TABLE IF EXISTS mv_esg_summary_sector")
+			db.Exec("DROP TABLE IF EXISTS mv_top_companies")
+			
+			if err := db.Exec("CREATE TABLE mv_esg_summary_sector AS " + sectorQuery).Error; err != nil {
+				log.Printf("Error creating mv_esg_summary_sector (SQLite): %v", err)
+			}
+			if err := db.Exec("CREATE TABLE mv_top_companies AS " + topQuery).Error; err != nil {
+				log.Printf("Error creating mv_top_companies (SQLite): %v", err)
+			}
+			log.Println("SQLite cache tables recreated.")
 		}
 		log.Println("Background cache refresh completed.")
 	}()

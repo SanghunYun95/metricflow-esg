@@ -1,127 +1,179 @@
 @coderabbitai[bot] commented on this pull request.
 
-Actionable comments posted: 14
+Actionable comments posted: 1
 
+🧹 Nitpick comments (4)
+backend-go/ingest/ingest.go (3)
+156-163: CSV 읽기 에러가 조용히 무시됩니다.
+
+Line 161-162에서 io.EOF가 아닌 에러를 continue로 건너뛰고 있습니다. 데이터 인코딩 문제나 손상된 row가 있을 때 디버깅이 어려워질 수 있으니, 최소한 로그를 남기는 것이 좋습니다.
+
+♻️ 에러 로깅 추가
+ 		if err == io.EOF {
+ 			break
+ 		}
+ 		if err != nil {
++			log.Printf("Warning: skipping row due to read error: %v", err)
+ 			continue
+ 		}
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@backend-go/ingest/ingest.go` around lines 156 - 163, The loop reading CSV
+records silently ignores non-EOF errors; update the loop where reader.Read() is
+called to log any read error (except io.EOF) before continuing so encoding/row
+corruption is visible during debugging. Locate the for loop that calls
+reader.Read() and replace the bare continue on err != nil with a call to the
+package logger (or log.Printf) including the error and the current record
+index/context (if available) and then continue; keep the io.EOF handling as-is.
+203-209: YearMonth 포맷팅을 fmt.Sprintf로 단순화할 수 있습니다.
+
+현재 수동으로 월 패딩을 처리하고 있는데, fmt.Sprintf를 사용하면 더 간결하고 가독성이 좋습니다.
+
+♻️ fmt.Sprintf 사용 제안
+ 	for i := 0; i < 60; i++ {
+ 		year := 2024 - (59-i)/12
+ 		month := 1 + (i % 12)
+-		yearMonth := strconv.Itoa(year) + "-" + strconv.FormatInt(int64(month), 10)
+-		if month < 10 {
+-			yearMonth = strconv.Itoa(year) + "-0" + strconv.FormatInt(int64(month), 10)
+-		}
++		yearMonth := fmt.Sprintf("%d-%02d", year, month)
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@backend-go/ingest/ingest.go` around lines 203 - 209, Replace the manual
+string-building and padding in the loop that computes yearMonth (variables year,
+month, yearMonth) with fmt.Sprintf to simplify formatting (e.g.,
+fmt.Sprintf("%04d-%02d", year, month)), remove the strconv-based concatenation,
+and ensure the file imports the fmt package if not already imported.
+63-79: CSV 헤더 읽기 에러를 무시하면 빈 파일이나 손상된 파일에서 예외가 발생합니다.
+
+Line 66에서 cHeader, _ := cReader.Read()로 에러를 무시하고 있습니다. 파일이 비어있거나 헤더가 없는 경우 cHMap이 빈 상태로 유지되어 이후 Line 76-78에서 인덱스 범위 초과 패닉이 발생할 수 있습니다.
+
+♻️ 에러 처리 추가 제안
+ 	if err == nil {
+ 		defer compMappingFile.Close()
+ 		cReader := csv.NewReader(compMappingFile)
+-		cHeader, _ := cReader.Read()
++		cHeader, err := cReader.Read()
++		if err != nil {
++			log.Printf("Warning: failed to read sp500_components.csv header: %v", err)
++		} else {
+ 		cHMap := make(map[string]int)
+ 		for i, name := range cHeader {
+ 			cHMap[name] = i
+ 		}
+ 		for {
+ 			cRec, cErr := cReader.Read()
+ 			if cErr != nil {
+ 				break
+ 			}
+ 			t := strings.TrimSpace(cRec[cHMap["Symbol"]])
+ 			compNameMap[t] = cRec[cHMap["Security"]]
+ 			compSectorMap[t] = cRec[cHMap["GICS Sector"]]
+ 		}
++		}
+ 	} else {
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@backend-go/ingest/ingest.go` around lines 63 - 79, The code ignores the
+header read error (cHeader, _ := cReader.Read()) which can lead to panics when
+the file is empty or malformed; update the compMappingFile parsing: check and
+handle the error returned by cReader.Read() (handle io.EOF and other errors by
+returning/logging and skipping further processing), verify that required header
+columns ("Symbol", "Security", "GICS Sector") exist in cHMap before using them,
+and bail out or skip records if those keys are missing; refer to
+compMappingFile, cReader, cHeader, cHMap, compNameMap and compSectorMap to
+locate where to add these checks and error handling.
+backend-go/main.go (1)
+183-209: Postgres 캐시 갱신은 구현되었지만, SQLite는 여전히 시뮬레이션만 합니다.
+
+Lines 189-196에서 Postgres용 REFRESH MATERIALIZED VIEW 로직이 추가되어 좋습니다. 하지만 SQLite의 경우 (Lines 197-201) Python의 backend/cache_utils.py처럼 캐시 테이블을 DROP하고 다시 CREATE해야 합니다.
+
+♻️ SQLite 캐시 갱신 로직 추가 제안
+ 		} else {
+-			// SQLite 등에서는 View나 캐시 테이블 재구조화 로직 필요 (여기선 로그만)
+-			time.Sleep(1 * time.Second)
+-			log.Println("Background cache refresh simulated for non-postgres dialect.")
++			// SQLite: DROP and recreate cache tables
++			sectorQuery := `SELECT c.industry AS sector, AVG(m.e_score) AS avg_e_score, AVG(m.s_score) AS avg_s_score, AVG(m.g_score) AS avg_g_score, AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS avg_total_score FROM companies c JOIN esg_metrics m ON c.id = m.company_id WHERE c.industry IS NOT NULL AND c.industry != 'Unknown' GROUP BY c.industry`
++			topQuery := `SELECT c.ticker, c.security_name, c.industry AS sector, AVG(m.e_score) AS e_score, AVG(m.s_score) AS s_score, AVG(m.g_score) AS g_score, AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS total_score FROM companies c JOIN esg_metrics m ON c.id = m.company_id GROUP BY c.ticker, c.security_name, c.industry`
++			
++			db.Exec("DROP TABLE IF EXISTS mv_esg_summary_sector")
++			db.Exec("DROP TABLE IF EXISTS mv_top_companies")
++			if err := db.Exec("CREATE TABLE mv_esg_summary_sector AS " + sectorQuery).Error; err != nil {
++				log.Printf("Error creating mv_esg_summary_sector: %v", err)
++			}
++			if err := db.Exec("CREATE TABLE mv_top_companies AS " + topQuery).Error; err != nil {
++				log.Printf("Error creating mv_top_companies: %v", err)
++			}
++			log.Println("SQLite cache tables recreated.")
+ 		}
+🤖 Prompt for AI Agents
+Verify each finding against the current code and only fix it if needed.
+
+In `@backend-go/main.go` around lines 183 - 209, The SQLite branch in refreshCache
+currently only sleeps and logs; instead implement concrete cache rebuilds
+similar to Python's backend/cache_utils.py by executing SQL to drop and recreate
+the cache tables/views using db.Exec. In the function refreshCache, replace the
+time.Sleep/log block under the non-postgres branch with calls to execute DROP
+TABLE IF EXISTS (or DROP VIEW IF EXISTS) for the cache artifacts (e.g.,
+mv_esg_summary_sector, mv_top_companies or their SQLite-equivalent cache table
+names) followed by CREATE TABLE ... AS SELECT ... (or appropriate
+INSERT/RECREATE statements) to repopulate them, and log/handle errors from each
+db.Exec call.
 🤖 Prompt for all review comments with AI agents
 Verify each finding against the current code and only fix it if needed.
 
 Inline comments:
+In `@backend-go/main.go`:
+- Around line 69-87: Remove the unnecessary credential header in the CORS
+middleware: in the anonymous Gin middleware (the func(c *gin.Context) that sets
+response headers) delete the
+c.Writer.Header().Set("Access-Control-Allow-Credentials", "true") call (or guard
+it behind an explicit config flag) so the middleware no longer emits
+Access-Control-Allow-Credentials when the frontend does not use credentials;
+keep the origin reflection and Vary header as-is.
+
+---
+
+Nitpick comments:
 In `@backend-go/ingest/ingest.go`:
-- Around line 105-123: The loop that reads CSV rows creates models.Company
-records and sends them to companyChan without deduplicating by Company.Ticker,
-causing unique constraint conflicts; modify the ingest loop (the code around
-reader.Read(), headerMap usage, and the models.Company creation) to normalize
-and dedupe tickers before sending: maintain a local set/map of seen tickers
-(e.g., seenTicker[string]bool), normalize the ticker string (trim whitespace and
-case if needed) when you extract ticker := record[headerMap["ticker"]], skip
-sending if seenTicker[ticker] is true, otherwise mark seenTicker[ticker]=true
-and send the company to companyChan and increment count. Ensure this dedupe
-logic is applied in the same scope that constructs models.Company and uses
-companyChan so duplicates never reach downstream insertion.
-- Around line 125-126: The hardcoded cutoff "if count >= 100 { break }" in
-ingest.go truncates ingestion to 100 rows despite the comment; change it to use
-a configurable env var (e.g., INGEST_ROW_LIMIT) read at startup (parsed as int)
-and apply the check only when the value > 0 so default behavior is "no limit"
-(or set default to 0/unlimited), replacing the direct use of the literal 100;
-update any related variable names (count, rowLimit) and ensure the check uses
-rowLimit > 0 && count >= rowLimit to preserve intended testing behavior.
-- Around line 117-120: The placeholder values in models.Company (constructed as
-comp in ingest.go) are causing all companies to be labeled as ticker + " Corp"
-and "Financial Services"; update the ingest logic to load and apply real
-security_name and industry mappings from sp500_components.csv (or reuse the
-existing Python ingest mapping) when constructing models.Company so that
-security_name and Industry fields are populated with CSV values instead of
-hardcoded placeholders; ensure the code that builds comp uses the CSV lookup (by
-ticker) before falling back to a sensible default and keep references consistent
-with models.Company, comp, and the CSV filename sp500_components.csv so the
-/sectors, /esg/summary and /esg/top-companies endpoints in backend-go/main.go
-reflect real data.
-- Line 15: Remove the unused import "github.com/schollz/progressbar/v3" from the
-import block in ingest.go; find the import line that references
-github.com/schollz/progressbar/v3 and delete it (or run goimports/gofmt to clean
-unused imports) so the package builds without the unused-progressbar compile
-error.
+- Around line 156-163: The loop reading CSV records silently ignores non-EOF
+errors; update the loop where reader.Read() is called to log any read error
+(except io.EOF) before continuing so encoding/row corruption is visible during
+debugging. Locate the for loop that calls reader.Read() and replace the bare
+continue on err != nil with a call to the package logger (or log.Printf)
+including the error and the current record index/context (if available) and then
+continue; keep the io.EOF handling as-is.
+- Around line 203-209: Replace the manual string-building and padding in the
+loop that computes yearMonth (variables year, month, yearMonth) with fmt.Sprintf
+to simplify formatting (e.g., fmt.Sprintf("%04d-%02d", year, month)), remove the
+strconv-based concatenation, and ensure the file imports the fmt package if not
+already imported.
+- Around line 63-79: The code ignores the header read error (cHeader, _ :=
+cReader.Read()) which can lead to panics when the file is empty or malformed;
+update the compMappingFile parsing: check and handle the error returned by
+cReader.Read() (handle io.EOF and other errors by returning/logging and skipping
+further processing), verify that required header columns ("Symbol", "Security",
+"GICS Sector") exist in cHMap before using them, and bail out or skip records if
+those keys are missing; refer to compMappingFile, cReader, cHeader, cHMap,
+compNameMap and compSectorMap to locate where to add these checks and error
+handling.
 
 In `@backend-go/main.go`:
-- Around line 177-190: The refreshCache handler currently spawns a goroutine
-that only sleeps and logs, so it never actually refreshes the materialized
-views; replace the noop with real DB refresh logic inside the goroutine: connect
-to your database (use the existing DB/sqlx/GORM client used elsewhere), execute
-the appropriate REFRESH MATERIALIZED VIEW statements for mv_esg_summary_sector
-and mv_top_companies (or run the SQL that rebuilds them), capture and log any
-errors, and ensure the goroutine context/transaction handling mirrors other DB
-calls (handle timeouts/cancellation) so the background job truly updates the
-cache rather than just sleeping.
-- Around line 69-73: 현재 미들웨어(r.Use anonymous func)에서
-Access-Control-Allow-Origin을 "*"로 고정하고 동시에 Access-Control-Allow-Credentials를
-"true"로 설정해 브라우저에서 차단됩니다; 수정 방법은 credentialed 요청에 대해 요청의 Origin을 반사(reflect)하도록
-바꾸고 Vary: Origin 헤더를 추가하거나, 자격증명(credentials)을 실제로 사용하지 않으면
-Access-Control-Allow-Credentials 헤더를 제거하는 것입니다. 구체적으로 익명 핸들러(func(c
-*gin.Context))에서 origin := c.Request.Header.Get("Origin")를 읽어 origin이 비어있지 않으면
-c.Writer.Header().Set("Access-Control-Allow-Origin", origin)로 설정하고
-c.Writer.Header().Set("Vary", "Origin")을 추가하고, 만약 자격증명을 지원하지 않는다면
-c.Writer.Header().Del("Access-Control-Allow-Credentials") 또는 해당 헤더를 설정하지 않도록
-변경하세요.
-- Around line 156-168: The endpoint currently orders by "total_score ASC" when
-building the query (see query.Order("total_score ASC") and
-manualQuery.Order("total_score ASC") that populate topCompanies/TopCompany),
-which returns the lowest scoring companies; change both ordering clauses to
-"total_score DESC" so the endpoint returns the top (highest-scoring) 10
-companies, ensuring the same DESC ordering is applied for both the cached/query
-path and the manualQuery fallback.
-
-In `@README.md`:
-- Around line 66-68: Remove the duplicate Note block in README.md by keeping a
-single consolidated note that contains the full intended sentence ("데이터베이스 자체의
-Materialized View 조회 성능은 동일하나, Go의 가벼운 런타임과 동시성 모델 덕분에 다중 요청 상황에서 압도적인 병목 해소 능력을
-보여줍니다.") and remove the extra blank line between them so the markdownlint MD028
-violation is resolved; ensure only one Note block remains and the text exactly
-matches the desired message.
-- Around line 96-98: Update the README's frontend API URL examples to match the
-newly recommended Go server port (8080) and ensure consistency across all
-sections (the "6. 서버 실행 (Go - 권장)" block and the other referenced examples
-around lines 182-184); specifically, edit the .env.local example that currently
-shows "http://localhost:8000/api/v1" to either "http://localhost:8080/api/v1"
-when instructing to run the Go backend or provide both variants (Python:8000 and
-Go:8080) with clear labels so UI consumers using .env.local know which URL to
-set depending on whether they run main.go or the Python server. Ensure the
-README mentions the .env.local filename and the exact URL string to copy for
-each backend option.
-- Line 2: The badge <img> tags in README.md lack alt attributes which triggers
-markdownlint MD045 and fails accessibility checks; update each <img> tag (the
-badge images for Next.js, React, Tailwind CSS, React Query, FastAPI, Python, Go,
-PostgreSQL, Vercel, Render) to include a meaningful alt attribute (e.g.,
-alt="Next.js", alt="React", alt="Tailwind CSS", etc.) so screen readers and
-linters receive descriptive text for each badge.
-
-In `@scripts/benchmark.go`:
-- Around line 13-15: The default endpoint constant (endpoint) should match the
-backend-go default port (use :8080) and the average latency calculation must
-guard against dividing by zero: change the endpoint value from
-"http://localhost:9000/..." to the correct default (http://localhost:8080/...)
-and update the latency averaging logic (the block that computes Avg Latency
-using totalRequests/successfulRequests around variables totalRequests,
-successfulRequests, avgLatency) to use successfulRequests > 0 as the condition
-and divide by successfulRequests (not totalRequests), returning a sensible
-zero/placeholder when there are no successful requests.
-- Around line 28-38: The current use of stop := time.After(duration) gives a
-single-shot channel that only one goroutine will receive; replace it with a
-context with timeout so all workers observe cancellation: create ctx, cancel :=
-context.WithTimeout(context.Background(), duration) (and defer cancel()), then
-inside the worker goroutine use select { case <-ctx.Done(): return; default: ...
-} instead of selecting on stop; update any references to stop and ensure the
-goroutines read from ctx.Done() so all concurrentUsers exit when the timeout
-occurs.
-- Around line 39-52: The benchmarking loop uses http.Get without a timeout,
-checks resp.StatusCode without ensuring resp is non-nil, and performs
-io.Copy/resp.Body.Close while holding mu which serializes goroutines and can
-leak bodies; update the code around variables reqStart/resp/err/endpoint to use
-a custom http.Client with a reasonable Timeout, after the http call first check
-err and only then inspect resp, always ensure resp.Body is closed (e.g., defer
-resp.Body.Close() immediately after verifying resp != nil) and move
-io.Copy(io.Discard, resp.Body) and resp.Body.Close() outside the
-mu.Lock()/Unlock() critical section so you only update counters (totalRequests,
-errors, totalLatency) while holding mu.
+- Around line 183-209: The SQLite branch in refreshCache currently only sleeps
+and logs; instead implement concrete cache rebuilds similar to Python's
+backend/cache_utils.py by executing SQL to drop and recreate the cache
+tables/views using db.Exec. In the function refreshCache, replace the
+time.Sleep/log block under the non-postgres branch with calls to execute DROP
+TABLE IF EXISTS (or DROP VIEW IF EXISTS) for the cache artifacts (e.g.,
+mv_esg_summary_sector, mv_top_companies or their SQLite-equivalent cache table
+names) followed by CREATE TABLE ... AS SELECT ... (or appropriate
+INSERT/RECREATE statements) to repopulate them, and log/handle errors from each
+db.Exec call.
 🪄 Autofix (Beta)
 Fix all unresolved CodeRabbit comments on this PR:
 
@@ -134,675 +186,65 @@ Review profile: CHILL
 
 Plan: Pro
 
-Run ID: ff7ad6e3-0427-4283-b5fc-5558adc3ebbc
+Run ID: 6e986a56-e6a9-45e7-aa20-c1a3380a4861
 
 📥 Commits
-Reviewing files that changed from the base of the PR and between 3a5dd6d and 74190de.
+Reviewing files that changed from the base of the PR and between 74190de and b6e6e55.
 
-⛔ Files ignored due to path filters (1)
-backend-go/go.sum is excluded by !**/*.sum
-📒 Files selected for processing (6)
+📒 Files selected for processing (5)
 README.md
-backend-go/go.mod
 backend-go/ingest/ingest.go
 backend-go/main.go
-backend-go/models/models.go
+pr_comment.txt
 scripts/benchmark.go
-In backend-go/ingest/ingest.go:
-
-> @@ -0,0 +1,168 @@
-+package main
-+
-+import (
-+	"encoding/csv"
-+	"io"
-+	"log"
-+	"math/rand"
-+	"os"
-+	"strconv"
-+	"sync"
-+	"time"
-+
-+	"github.com/SanghunYun95/metricflow-esg/backend-go/models"
-+	"github.com/joho/godotenv"
-+	"github.com/schollz/progressbar/v3"
-⚠️ Potential issue | 🔴 Critical
-
-🧩 Analysis chain
-🏁 Script executed:
-
-# First, check if the file exists and read the import section
-head -30 backend-go/ingest/ingest.go | cat -n
-Repository: SanghunYun95/metricflow-esg
-
-Length of output: 764
-
-🏁 Script executed:
-
-# Search for any usage of progressbar in the file
-rg "progressbar" backend-go/ingest/ingest.go
-Repository: SanghunYun95/metricflow-esg
-
-Length of output: 107
-
-🏁 Script executed:
-
-# Get the full length of the file to understand its scope
-wc -l backend-go/ingest/ingest.go
-Repository: SanghunYun95/metricflow-esg
-
-Length of output: 102
-
-progressbar import를 제거하세요.
-
-Line 15의 github.com/schollz/progressbar/v3 import는 파일 내에서 사용되지 않습니다. Go 컴파일러는 사용되지 않는 import를 오류로 처리하므로 현재 상태로는 ingest 바이너리가 빌드되지 않습니다.
-
-🤖 Prompt for AI Agents
-Verify each finding against the current code and only fix it if needed.
-
-In `@backend-go/ingest/ingest.go` at line 15, Remove the unused import
-"github.com/schollz/progressbar/v3" from the import block in ingest.go; find the
-import line that references github.com/schollz/progressbar/v3 and delete it (or
-run goimports/gofmt to clean unused imports) so the package builds without the
-unused-progressbar compile error.
-In backend-go/ingest/ingest.go:
-
-> +	db.Migrator().DropTable(&models.Company{}, &models.ESGMetric{})
-+	db.AutoMigrate(&models.Company{}, &models.ESGMetric{})
-⚠️ Potential issue | 🔴 Critical
-
-DB migration/write 에러를 모두 무시하면 성공 로그를 신뢰할 수 없습니다.
-
-지금은 DropTable, AutoMigrate, Create, CreateInBatches의 결과를 전부 버리고 있습니다. unique 제약이나 DB 장애가 나도 마지막에 Ingestion completed를 찍고, Create(&batch)가 실패한 뒤에도 generateMetrics가 계속 돌면서 후속 insert까지 오염시킬 수 있습니다.
-
-🛠️ 예시 수정안
--db.Migrator().DropTable(&models.Company{}, &models.ESGMetric{})
--db.AutoMigrate(&models.Company{}, &models.ESGMetric{})
-+if err := db.Migrator().DropTable(&models.Company{}, &models.ESGMetric{}); err != nil {
-+	log.Fatal(err)
-+}
-+if err := db.AutoMigrate(&models.Company{}, &models.ESGMetric{}); err != nil {
-+	log.Fatal(err)
-+}
-...
--				if len(batch) >= 100 { // 컴퍼니는 개수가 적으므로 작은 단위로
--					db.Create(&batch)
--					// 각 컴퍼니에 대한 시뮬레이션 데이터 생성
--					for _, c := range batch {
--						generateMetrics(db, c.ID)
--					}
-+				if len(batch) >= 100 { // 컴퍼니는 개수가 적으므로 작은 단위로
-+					if err := db.Create(&batch).Error; err != nil {
-+						log.Printf("insert companies failed: %v", err)
-+						batch = nil
-+						continue
-+					}
-+					for _, c := range batch {
-+						if err := generateMetrics(db, c.ID); err != nil {
-+							log.Printf("insert metrics failed for company %d: %v", c.ID, err)
-+						}
-+					}
- 					batch = nil
- 				}
-...
--func generateMetrics(db *gorm.DB, companyID uint) {
-+func generateMetrics(db *gorm.DB, companyID uint) error {
- 	...
--	db.CreateInBatches(metrics, 60)
-+	return db.CreateInBatches(metrics, 60).Error
- }
-Also applies to: 87-100, 161-161
-
-In backend-go/ingest/ingest.go:
-
-> +	// 데이터 읽기 및 채널 전송
-+	count := 0
-+	for {
-+		record, err := reader.Read()
-+		if err == io.EOF {
-+			break
-+		}
-+		if err != nil {
-+			continue
-+		}
-+
-+		ticker := record[headerMap["ticker"]]
-+		comp := models.Company{
-+			Ticker:       ticker,
-+			SecurityName: ticker + " Corp", // 실제 데이터에서는 sp500_components.csv와 조인 필요
-+			Industry:     "Financial Services", // 임시 섹터
-+		}
-+		companyChan <- comp
-+		count++
-⚠️ Potential issue | 🟠 Major
-
-ticker 기준 dedupe 없이 company insert를 밀어 넣으면 unique 제약과 충돌합니다.
-
-Company.Ticker는 unique인데 여기서는 CSV row를 그대로 회사 레코드로 보내고 있습니다. Python ingest 쪽은 drop_duplicates(subset=['ticker'])를 먼저 하고 있어서, Go path도 같은 정규화를 하지 않으면 batch 전체가 실패하거나 적재 회사 수가 크게 줄어듭니다.
-
-🤖 Prompt for AI Agents
-Verify each finding against the current code and only fix it if needed.
-
-In `@backend-go/ingest/ingest.go` around lines 105 - 123, The loop that reads CSV
-rows creates models.Company records and sends them to companyChan without
-deduplicating by Company.Ticker, causing unique constraint conflicts; modify the
-ingest loop (the code around reader.Read(), headerMap usage, and the
-models.Company creation) to normalize and dedupe tickers before sending:
-maintain a local set/map of seen tickers (e.g., seenTicker[string]bool),
-normalize the ticker string (trim whitespace and case if needed) when you
-extract ticker := record[headerMap["ticker"]], skip sending if
-seenTicker[ticker] is true, otherwise mark seenTicker[ticker]=true and send the
-company to companyChan and increment count. Ensure this dedupe logic is applied
-in the same scope that constructs models.Company and uses companyChan so
-duplicates never reach downstream insertion.
-In backend-go/ingest/ingest.go:
-
-> +		comp := models.Company{
-+			Ticker:       ticker,
-+			SecurityName: ticker + " Corp", // 실제 데이터에서는 sp500_components.csv와 조인 필요
-+			Industry:     "Financial Services", // 임시 섹터
-⚠️ Potential issue | 🟠 Major
-
-placeholder 섹터/회사명 때문에 핵심 집계 API가 왜곡됩니다.
-
-모든 회사를 ticker + " Corp"와 "Financial Services"로 채우면 backend-go/main.go의 /sectors, /esg/summary, /esg/top-companies가 실제 데이터가 아니라 단일 섹터 샘플만 보게 됩니다. 최소한 CSV의 실제 security_name/industry를 읽거나 Python ingest처럼 sp500_components.csv 매핑을 재사용해야 합니다.
-
-🤖 Prompt for AI Agents
-Verify each finding against the current code and only fix it if needed.
-
-In `@backend-go/ingest/ingest.go` around lines 117 - 120, The placeholder values
-in models.Company (constructed as comp in ingest.go) are causing all companies
-to be labeled as ticker + " Corp" and "Financial Services"; update the ingest
-logic to load and apply real security_name and industry mappings from
-sp500_components.csv (or reuse the existing Python ingest mapping) when
-constructing models.Company so that security_name and Industry fields are
-populated with CSV values instead of hardcoded placeholders; ensure the code
-that builds comp uses the CSV lookup (by ticker) before falling back to a
-sensible default and keep references consistent with models.Company, comp, and
-the CSV filename sp500_components.csv so the /sectors, /esg/summary and
-/esg/top-companies endpoints in backend-go/main.go reflect real data.
-In backend-go/ingest/ingest.go:
-
-> +		if count >= 100 { // 테스트를 위해 100개사만 진행 (실제로는 제한 없음)
-+			break
-⚠️ Potential issue | 🟠 Major
-
-100개사 하드코딩 제한은 테스트용 주석과 실제 동작이 다릅니다.
-
-주석은 “실제로는 제한 없음”이라고 되어 있지만, Line 125-126 때문에 현재 ingest 결과는 항상 100개 회사에서 잘립니다. 이 상태로는 README의 50k/3M 시나리오나 Python 쪽 기본 ingest 규모를 재현할 수 없으니, row limit를 env로 빼거나 기본값을 전체 적재로 두는 편이 맞습니다.
-
-🤖 Prompt for AI Agents
-Verify each finding against the current code and only fix it if needed.
-
-In `@backend-go/ingest/ingest.go` around lines 125 - 126, The hardcoded cutoff "if
-count >= 100 { break }" in ingest.go truncates ingestion to 100 rows despite the
-comment; change it to use a configurable env var (e.g., INGEST_ROW_LIMIT) read
-at startup (parsed as int) and apply the check only when the value > 0 so
-default behavior is "no limit" (or set default to 0/unlimited), replacing the
-direct use of the literal 100; update any related variable names (count,
-rowLimit) and ensure the check uses rowLimit > 0 && count >= rowLimit to
-preserve intended testing behavior.
+✅ Files skipped from review due to trivial changes (1)
+README.md
+🚧 Files skipped from review as they are similar to previous changes (1)
+scripts/benchmark.go
 In backend-go/main.go:
 
 > +	r.Use(func(c *gin.Context) {
-+		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
++		origin := c.Request.Header.Get("Origin")
++		if origin != "" {
++			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
++			c.Writer.Header().Set("Vary", "Origin")
++		} else {
++			c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
++		}
 +		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
 +		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
 +		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
-⚠️ Potential issue | 🟠 Major
-
-Access-Control-Allow-Origin: * 와 Allow-Credentials: true를 같이 보내면 브라우저가 막습니다.
-
-credentialed CORS 요청에서는 wildcard origin을 쓸 수 없어서, 지금 조합은 브라우저 쪽에서 네트워크 에러로 처리됩니다. 특정 origin을 반사하면서 Vary: Origin을 추가하거나, credentials 지원이 필요 없으면 해당 헤더를 빼는 편이 안전합니다. (developer.mozilla.org)
-
-🤖 Prompt for AI Agents
-Verify each finding against the current code and only fix it if needed.
-
-In `@backend-go/main.go` around lines 69 - 73, 현재 미들웨어(r.Use anonymous func)에서
-Access-Control-Allow-Origin을 "*"로 고정하고 동시에 Access-Control-Allow-Credentials를
-"true"로 설정해 브라우저에서 차단됩니다; 수정 방법은 credentialed 요청에 대해 요청의 Origin을 반사(reflect)하도록
-바꾸고 Vary: Origin 헤더를 추가하거나, 자격증명(credentials)을 실제로 사용하지 않으면
-Access-Control-Allow-Credentials 헤더를 제거하는 것입니다. 구체적으로 익명 핸들러(func(c
-*gin.Context))에서 origin := c.Request.Header.Get("Origin")를 읽어 origin이 비어있지 않으면
-c.Writer.Header().Set("Access-Control-Allow-Origin", origin)로 설정하고
-c.Writer.Header().Set("Vary", "Origin")을 추가하고, 만약 자격증명을 지원하지 않는다면
-c.Writer.Header().Del("Access-Control-Allow-Credentials") 또는 해당 헤더를 설정하지 않도록
-변경하세요.
-In backend-go/main.go:
-
-> +	err := query.Order("total_score ASC").Limit(10).Find(&topCompanies).Error
-+	if err != nil {
-+		log.Println("Cache miss or error, falling back to manual aggregation:", err)
-+		manualQuery := db.Table("companies").
-+			Select("companies.ticker, companies.security_name, AVG(esg_metrics.e_score) as e_score, AVG(esg_metrics.s_score) as s_score, AVG(esg_metrics.g_score) as g_score, AVG((esg_metrics.e_score + esg_metrics.s_score + esg_metrics.g_score) / 3.0) as total_score").
-+			Joins("JOIN esg_metrics ON companies.id = esg_metrics.company_id").
-+			Group("companies.ticker, companies.security_name")
 +
-+		if sector != "" {
-+			manualQuery = manualQuery.Where("companies.industry = ?", sector)
++		if c.Request.Method == "OPTIONS" {
++			c.AbortWithStatus(204)
++			return
 +		}
 +
-+		if err := manualQuery.Order("total_score ASC").Limit(10).Scan(&topCompanies).Error; err != nil {
-⚠️ Potential issue | 🟠 Major
-
-top-companies 정렬 방향이 반대로 되어 있습니다.
-
-total_score ASC라서 현재 endpoint는 점수가 가장 높은 회사가 아니라 가장 낮은 10개 회사를 반환합니다. endpoint 이름과 TopCompany 모델 의미를 보면 여기서는 DESC가 맞습니다.
-
-🛠️ 예시 수정안
--	err := query.Order("total_score ASC").Limit(10).Find(&topCompanies).Error
-+	err := query.Order("total_score DESC").Limit(10).Find(&topCompanies).Error
-@@
--		if err := manualQuery.Order("total_score ASC").Limit(10).Scan(&topCompanies).Error; err != nil {
-+		if err := manualQuery.Order("total_score DESC").Limit(10).Scan(&topCompanies).Error; err != nil {
- 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
- 			return
- 		}
-📝 Committable suggestion
-‼️ IMPORTANT
-Carefully review the code before committing. Ensure that it accurately replaces the highlighted code, contains no missing lines, and has no issues with indentation. Thoroughly test & benchmark the code to ensure it meets the requirements.
-
-⬇️ Suggested change
--	err := query.Order("total_score ASC").Limit(10).Find(&topCompanies).Error
--	if err != nil {
--		log.Println("Cache miss or error, falling back to manual aggregation:", err)
--		manualQuery := db.Table("companies").
--			Select("companies.ticker, companies.security_name, AVG(esg_metrics.e_score) as e_score, AVG(esg_metrics.s_score) as s_score, AVG(esg_metrics.g_score) as g_score, AVG((esg_metrics.e_score + esg_metrics.s_score + esg_metrics.g_score) / 3.0) as total_score").
--			Joins("JOIN esg_metrics ON companies.id = esg_metrics.company_id").
--			Group("companies.ticker, companies.security_name")
--
--		if sector != "" {
--			manualQuery = manualQuery.Where("companies.industry = ?", sector)
--		}
--
--		if err := manualQuery.Order("total_score ASC").Limit(10).Scan(&topCompanies).Error; err != nil {
-+	err := query.Order("total_score DESC").Limit(10).Find(&topCompanies).Error
-+	if err != nil {
-+		log.Println("Cache miss or error, falling back to manual aggregation:", err)
-+		manualQuery := db.Table("companies").
-+			Select("companies.ticker, companies.security_name, AVG(esg_metrics.e_score) as e_score, AVG(esg_metrics.s_score) as s_score, AVG(esg_metrics.g_score) as g_score, AVG((esg_metrics.e_score + esg_metrics.s_score + esg_metrics.g_score) / 3.0) as total_score").
-+			Joins("JOIN esg_metrics ON companies.id = esg_metrics.company_id").
-+			Group("companies.ticker, companies.security_name")
-+
-+		if sector != "" {
-+			manualQuery = manualQuery.Where("companies.industry = ?", sector)
-+		}
-+
-+		if err := manualQuery.Order("total_score DESC").Limit(10).Scan(&topCompanies).Error; err != nil {
-🤖 Prompt for AI Agents
-Verify each finding against the current code and only fix it if needed.
-
-In `@backend-go/main.go` around lines 156 - 168, The endpoint currently orders by
-"total_score ASC" when building the query (see query.Order("total_score ASC")
-and manualQuery.Order("total_score ASC") that populate topCompanies/TopCompany),
-which returns the lowest scoring companies; change both ordering clauses to
-"total_score DESC" so the endpoint returns the top (highest-scoring) 10
-companies, ensuring the same DESC ordering is applied for both the cached/query
-path and the manualQuery fallback.
-In backend-go/main.go:
-
-> +func refreshCache(c *gin.Context) {
-+	// Go의 강점: 고루틴을 활용한 논블로킹 백그라운드 처리
-+	go func() {
-+		log.Println("Background cache refresh started...")
-+		// 실제 상용 환경에서는 여기서 DB Dialect에 따라 REFRESH MATERIALIZED VIEW 등을 실행
-+		// 여기서는 간단히 로그로 대체하거나 로직 구현 가능
-+		time.Sleep(2 * time.Second) // 시뮬레이션
-+		log.Println("Background cache refresh completed.")
-+	}()
-+
-+	c.JSON(http.StatusAccepted, gin.H{
-+		"status":  "accepted",
-+		"message": "Cache refresh started in the background (Goroutine)",
++		c.Next()
 +	})
-⚠️ Potential issue | 🟠 Major
-
-refresh-cache가 실제 캐시를 전혀 갱신하지 않습니다.
-
-현재 handler는 goroutine 안에서 Sleep과 로그만 남기고 끝납니다. 이 PR 안에는 mv_esg_summary_sector / mv_top_companies를 생성·갱신하는 코드가 따로 없어서, 클라이언트는 202를 받더라도 캐시 상태가 실제로 바뀌지 않습니다.
-
-🤖 Prompt for AI Agents
-Verify each finding against the current code and only fix it if needed.
-
-In `@backend-go/main.go` around lines 177 - 190, The refreshCache handler
-currently spawns a goroutine that only sleeps and logs, so it never actually
-refreshes the materialized views; replace the noop with real DB refresh logic
-inside the goroutine: connect to your database (use the existing DB/sqlx/GORM
-client used elsewhere), execute the appropriate REFRESH MATERIALIZED VIEW
-statements for mv_esg_summary_sector and mv_top_companies (or run the SQL that
-rebuilds them), capture and log any errors, and ensure the goroutine
-context/transaction handling mirrors other DB calls (handle
-timeouts/cancellation) so the background job truly updates the cache rather than
-just sleeping.
-In README.md:
-
-> @@ -1,5 +1,5 @@
- # MetricFlow ESG Dashboard
--<img src="https://img.shields.io/badge/Next.js-000000?style=flat-square&logo=nextdotjs&logoColor=white"><img src="https://img.shields.io/badge/React-61DAFB?style=flat-square&logo=react&logoColor=black"><img src="https://img.shields.io/badge/Tailwind%20CSS-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white"><img src="https://img.shields.io/badge/React%20Query-FF4154?style=flat-square&logo=reactquery&logoColor=white"><img src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white"><img src="https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white"><img src="https://img.shields.io/badge/PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white"><img src="https://img.shields.io/badge/Vercel-000000?style=flat-square&logo=vercel&logoColor=white"><img src="https://img.shields.io/badge/Render-46E3B7?style=flat-square&logo=render&logoColor=white">
-+<img src="https://img.shields.io/badge/Next.js-000000?style=flat-square&logo=nextdotjs&logoColor=white"><img src="https://img.shields.io/badge/React-61DAFB?style=flat-square&logo=react&logoColor=black"><img src="https://img.shields.io/badge/Tailwind%20CSS-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white"><img src="https://img.shields.io/badge/React%20Query-FF4154?style=flat-square&logo=reactquery&logoColor=white"><img src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white"><img src="https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white"><img src="https://img.shields.io/badge/Go-00ADD8?style=flat-square&logo=go&logoColor=white"><img src="https://img.shields.io/badge/PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white"><img src="https://img.shields.io/badge/Vercel-000000?style=flat-square&logo=vercel&logoColor=white"><img src="https://img.shields.io/badge/Render-46E3B7?style=flat-square&logo=render&logoColor=white">
 ⚠️ Potential issue | 🟡 Minor
-
-배지 이미지에 대체 텍스트를 추가해 주세요.
-
-Line 2의 <img> 태그들이 모두 alt 없이 들어가 있어서 markdownlint(MD045)가 계속 실패하고, 스크린리더에도 기술 스택 정보가 전달되지 않습니다.
-
-🧰 Tools 🪛 markdownlint-cli2 (0.22.0)
-[warning] 2-2: Images should have alternate text (alt text)
-
-(MD045, no-alt-text)
-
-[warning] 2-2: Images should have alternate text (alt text)
-
-(MD045, no-alt-text)
-
-[warning] 2-2: Images should have alternate text (alt text)
-
-(MD045, no-alt-text)
-
-[warning] 2-2: Images should have alternate text (alt text)
-
-(MD045, no-alt-text)
-
-[warning] 2-2: Images should have alternate text (alt text)
-
-(MD045, no-alt-text)
-
-[warning] 2-2: Images should have alternate text (alt text)
-
-(MD045, no-alt-text)
-
-[warning] 2-2: Images should have alternate text (alt text)
-
-(MD045, no-alt-text)
-
-[warning] 2-2: Images should have alternate text (alt text)
-
-(MD045, no-alt-text)
-
-[warning] 2-2: Images should have alternate text (alt text)
-
-(MD045, no-alt-text)
-
-[warning] 2-2: Images should have alternate text (alt text)
-
-(MD045, no-alt-text)
-
-🤖 Prompt for AI Agents
-Verify each finding against the current code and only fix it if needed.
-
-In `@README.md` at line 2, The badge <img> tags in README.md lack alt attributes
-which triggers markdownlint MD045 and fails accessibility checks; update each
-<img> tag (the badge images for Next.js, React, Tailwind CSS, React Query,
-FastAPI, Python, Go, PostgreSQL, Vercel, Render) to include a meaningful alt
-attribute (e.g., alt="Next.js", alt="React", alt="Tailwind CSS", etc.) so screen
-readers and linters receive descriptive text for each badge.
-In README.md:
-
-> +> **Note:** 데이터베이스 자체의 Materialized View 조회 성능은 동일하나, Go의 가벼운 런타임과 고루틴 동시성 모델 덕분에 다중 요청 상황에서 압도적인 병목 해소 능력을 보여줍니다. (실제 300만 건 대상 테스트는 TODO 진행 예정)
-+
-+> **Note:** 데이터베이스 자체의 Materialized View 조회 성능은 동일하나, Go의 가벼운 런타임과 동시성 모델 덕분에 다중 요청 상황에서 압도적인 병목 해소 능력을 보여줍니다.
-⚠️ Potential issue | 🟡 Minor
-
-중복 Note 블록을 하나로 합쳐 주세요.
-
-Line 66과 Line 68의 메시지가 사실상 동일하고, 그 사이 빈 줄 때문에 markdownlint(MD028)도 같이 깨집니다.
-
-🧰 Tools 🪛 markdownlint-cli2 (0.22.0)
-[warning] 67-67: Blank line inside blockquote
-
-(MD028, no-blanks-blockquote)
-
-🤖 Prompt for AI Agents
-Verify each finding against the current code and only fix it if needed.
-
-In `@README.md` around lines 66 - 68, Remove the duplicate Note block in README.md
-by keeping a single consolidated note that contains the full intended sentence
-("데이터베이스 자체의 Materialized View 조회 성능은 동일하나, Go의 가벼운 런타임과 동시성 모델 덕분에 다중 요청 상황에서
-압도적인 병목 해소 능력을 보여줍니다.") and remove the extra blank line between them so the
-markdownlint MD028 violation is resolved; ensure only one Note block remains and
-the text exactly matches the desired message.
-In README.md:
-
-> +# 6. 서버 실행 (Go - 권장)
-+cd ../backend-go
-+go run main.go
-⚠️ Potential issue | 🟠 Major
-
-Go 실행 절차를 추가했으면 프론트엔드 API URL 예시도 같이 맞춰야 합니다.
-
-지금 README는 Go 서버를 권장하면서도 프론트엔드 .env.local 예시는 계속 http://localhost:8000/api/v1를 가리킵니다. 사용자가 새 절차대로 Go 서버를 8080에서 띄우면 UI는 여전히 Python 포트를 호출해서 로컬 실행 흐름이 바로 깨집니다.
-
-Also applies to: 182-184
-
-🤖 Prompt for AI Agents
-Verify each finding against the current code and only fix it if needed.
-
-In `@README.md` around lines 96 - 98, Update the README's frontend API URL
-examples to match the newly recommended Go server port (8080) and ensure
-consistency across all sections (the "6. 서버 실행 (Go - 권장)" block and the other
-referenced examples around lines 182-184); specifically, edit the .env.local
-example that currently shows "http://localhost:8000/api/v1" to either
-"http://localhost:8080/api/v1" when instructing to run the Go backend or provide
-both variants (Python:8000 and Go:8080) with clear labels so UI consumers using
-.env.local know which URL to set depending on whether they run main.go or the
-Python server. Ensure the README mentions the .env.local filename and the exact
-URL string to copy for each backend option.
-In scripts/benchmark.go:
-
-> +	const concurrentUsers = 50
-+	const duration = 10 * time.Second
-+	const endpoint = "http://localhost:9000/api/v1/esg/summary" // Python/Go 타겟 주소에 따라 수정
-⚠️ Potential issue | 🟠 Major
-
-기본 endpoint와 평균 latency 계산이 all-error 케이스를 깨뜨립니다.
-
-backend-go/main.go 기본 포트는 8080인데 여기 기본값은 9000이라 그대로 실행하면 전부 실패하기 쉽습니다. 그 상태에서 Line 61-64는 성공 요청 수가 0이어도 totalRequests > 0만 검사해서 Avg Latency가 Inf/NaN으로 무너집니다.
-
-Also applies to: 61-64
-
-🤖 Prompt for AI Agents
-Verify each finding against the current code and only fix it if needed.
-
-In `@scripts/benchmark.go` around lines 13 - 15, The default endpoint constant
-(endpoint) should match the backend-go default port (use :8080) and the average
-latency calculation must guard against dividing by zero: change the endpoint
-value from "http://localhost:9000/..." to the correct default
-(http://localhost:8080/...) and update the latency averaging logic (the block
-that computes Avg Latency using totalRequests/successfulRequests around
-variables totalRequests, successfulRequests, avgLatency) to use
-successfulRequests > 0 as the condition and divide by successfulRequests (not
-totalRequests), returning a sensible zero/placeholder when there are no
-successful requests.
-In scripts/benchmark.go:
-
-> +	stop := time.After(duration)
-+	
-+	for i := 0; i < concurrentUsers; i++ {
-+		wg.Add(1)
-+		go func() {
-+			defer wg.Done()
-+			for {
-+				select {
-+				case <-stop:
-+					return
-+				default:
-⚠️ Potential issue | 🔴 Critical
 
 🧩 Analysis chain
 🏁 Script executed:
 
-find . -name "benchmark.go" -type f
+#!/bin/bash
+# 프론트엔드에서 credentials: 'include' 사용 여부 확인
+rg -n "credentials.*include|withCredentials" --type=ts --type=tsx --type=js 2>/dev/null || echo "No credentials usage found in frontend"
 Repository: SanghunYun95/metricflow-esg
 
-Length of output: 93
+Length of output: 109
 
-🏁 Script executed:
+Access-Control-Allow-Credentials: true 헤더 제거 권장
 
-cat -n scripts/benchmark.go | head -60
-Repository: SanghunYun95/metricflow-esg
+프론트엔드에서 credentials: 'include'를 사용하지 않으므로, 77번 라인의 Access-Control-Allow-Credentials: true 헤더는 제거하는 것이 좋습니다. 불필요한 헤더는 공격 노출 면적을 늘리며 CORS 사양 상 권장되지 않습니다. Origin 반사와 Vary: Origin 추가로 개선된 CORS 설정을 더 정리하면, 실제로 필요한 헤더만 설정할 수 있습니다.
 
-Length of output: 1574
-
-🏁 Script executed:
-
-# Verify Go's time.After channel behavior documentation
-curl -s "https://pkg.go.dev/time?tab=doc" | grep -A 10 "func After" || echo "Will verify from general Go knowledge"
-Repository: SanghunYun95/metricflow-esg
-
-Length of output: 108
-
-🌐 Web query:
-
-Go context.Done() channel closed behavior multiple goroutines
-
-💡 Result:
-
-In Go, the context.Done channel is safe for use by multiple goroutines. When a context is canceled (via its cancel function or timeout/deadline), the Done channel is closed once, and all goroutines selecting on or receiving from it will immediately detect the closure and proceed. Key behaviors: - The same Context instance (and its single Done channel) can be passed to multiple goroutines safely. - Closing happens asynchronously but is atomic; multiple goroutines calling cancel are safe—only the first has effect, subsequent calls do nothing. - Receiving from a closed Done channel always succeeds immediately, returning the zero value for struct{} (nil), allowing all waiting goroutines to exit promptly without race conditions or panics. - Goroutines typically use select statements to check ctx.Done alongside other operations, ensuring cooperative cancellation. Example pattern for multiple goroutines: ctx, cancel := context.WithCancel(context.Background) var wg sync.WaitGroup wg.Add(2) go func { defer wg.Done for { select { case <-ctx.Done: return default: // do work } } } go func { defer wg.Done // similar loop } go func { // some time later cancel // closes Done once; both goroutines detect it } wg.Wait This prevents goroutine leaks and enables graceful shutdowns. Never close ctx.Done yourself—it's managed internally by the context package.
-
-Citations:
-
-1: https://pkg.go.dev/context@go1.21rc4
-2: https://pkg.go.dev/context?tab=doc
-3: https://pkg.go.dev/context
-4: https://pkg.go.dev/context@go1.25.6
-5: https://oneuptime.com/blog/post/2026-01-25-gracefully-cancel-goroutines-context-go/view
-6: https://oneuptime.com/blog/post/2026-01-23-go-context-cancellation/view
-7: https://oneuptime.com/blog/post/2026-01-30-go-context-request-cancellation/view
-8: https://stackoverflow.com/questions/61007385/golang-pattern-to-kill-multiple-goroutines-at-once
-공유된 time.After 채널은 한 개의 worker에만 신호를 전달합니다.
-
-time.After는 정확히 하나의 값을 채널에 전송하는 일회용 타이머입니다. 모든 50개 goroutine이 동일한 stop 채널을 선택할 때, 오직 하나의 goroutine만 신호를 수신하고 나머지 49개는 default 경로로 계속 실행되어 wg.Wait()이 무한 대기하게 됩니다. 정확한 동시 취소가 필요한 경우 context.WithCancel() 또는 context.WithTimeout()을 사용해야 합니다. 채널이 닫히면 모든 수신자가 즉시 깨어나기 때문입니다.
-
-🛠️ 수정 방법
-+import "context"
-+
- func main() {
- 	// 50명의 동시 사용자가 10초간 요청
- 	const concurrentUsers = 50
- 	const duration = 10 * time.Second
- 	const endpoint = "http://localhost:9000/api/v1/esg/summary" // Python/Go 타겟 주소에 따라 수정
-@@
--	stop := time.After(duration)
-+	ctx, cancel := context.WithTimeout(context.Background(), duration)
-+	defer cancel()
- 	
- 	for i := 0; i < concurrentUsers; i++ {
- 		wg.Add(1)
- 		go func() {
- 			defer wg.Done()
- 			for {
- 				select {
--				case <-stop:
-+				case <-ctx.Done():
- 					return
- 				default:
-📝 Committable suggestion
-‼️ IMPORTANT
-Carefully review the code before committing. Ensure that it accurately replaces the highlighted code, contains no missing lines, and has no issues with indentation. Thoroughly test & benchmark the code to ensure it meets the requirements.
-
-⬇️ Suggested change
--	stop := time.After(duration)
--	
--	for i := 0; i < concurrentUsers; i++ {
--		wg.Add(1)
--		go func() {
--			defer wg.Done()
--			for {
--				select {
--				case <-stop:
--					return
--				default:
-+	ctx, cancel := context.WithTimeout(context.Background(), duration)
-+	defer cancel()
-+	
-+	for i := 0; i < concurrentUsers; i++ {
-+		wg.Add(1)
-+		go func() {
-+			defer wg.Done()
-+			for {
-+				select {
-+				case <-ctx.Done():
-+					return
-+				default:
 🤖 Prompt for AI Agents
 Verify each finding against the current code and only fix it if needed.
 
-In `@scripts/benchmark.go` around lines 28 - 38, The current use of stop :=
-time.After(duration) gives a single-shot channel that only one goroutine will
-receive; replace it with a context with timeout so all workers observe
-cancellation: create ctx, cancel := context.WithTimeout(context.Background(),
-duration) (and defer cancel()), then inside the worker goroutine use select {
-case <-ctx.Done(): return; default: ... } instead of selecting on stop; update
-any references to stop and ensure the goroutines read from ctx.Done() so all
-concurrentUsers exit when the timeout occurs.
-In scripts/benchmark.go:
-
-> +					reqStart := time.Now()
-+					resp, err := http.Get(endpoint)
-+					latency := time.Since(reqStart)
-+
-+					mu.Lock()
-+					totalRequests++
-+					if err != nil || resp.StatusCode != 200 {
-+						errors++
-+					} else {
-+						totalLatency += latency
-+						io.Copy(io.Discard, resp.Body)
-+						resp.Body.Close()
-+					}
-+					mu.Unlock()
-⚠️ Potential issue | 🔴 Critical
-
-🧩 Analysis chain
-🏁 Script executed:
-
-cat -n scripts/benchmark.go | head -80
-Repository: SanghunYun95/metricflow-esg
-
-Length of output: 2062
-
-응답 정리와 timeout 처리가 벤치마크를 왜곡하고 리소스 누수를 일으킵니다.
-
-http.Get는 timeout이 없는 DefaultClient를 사용하고, 실패 응답이나 non-200 상태에서는 resp.Body를 닫지 않습니다. 또한 줄 49-50의 io.Copy/Close가 mutex 내부에서 실행되어 50개의 동시 고루틴이 순차적으로 대기하게 되므로 벤치마크 결과가 왜곡됩니다. 더 심각하게는 줄 45에서 err != nil일 때 resp.StatusCode에 접근하면 nil 역참조 패닉이 발생합니다.
-
-🛠️ 수정안
- func main() {
- 	// 50명의 동시 사용자가 10초간 요청
- 	const concurrentUsers = 50
- 	const duration = 10 * time.Second
- 	const endpoint = "http://localhost:9000/api/v1/esg/summary" // Python/Go 타겟 주소에 따라 수정
-+	client := &http.Client{Timeout: 5 * time.Second}
-@@
--					resp, err := http.Get(endpoint)
-+					resp, err := client.Get(endpoint)
- 					latency := time.Since(reqStart)
-+
-+					if resp != nil {
-+						io.Copy(io.Discard, resp.Body)
-+						resp.Body.Close()
-+					}
- 
- 					mu.Lock()
- 					totalRequests++
--					if err != nil || resp.StatusCode != 200 {
-+					if err != nil || resp.StatusCode != http.StatusOK {
- 						errors++
- 					} else {
- 						totalLatency += latency
--						io.Copy(io.Discard, resp.Body)
--						resp.Body.Close()
- 					}
- 					mu.Unlock()
-🤖 Prompt for AI Agents
-Verify each finding against the current code and only fix it if needed.
-
-In `@scripts/benchmark.go` around lines 39 - 52, The benchmarking loop uses
-http.Get without a timeout, checks resp.StatusCode without ensuring resp is
-non-nil, and performs io.Copy/resp.Body.Close while holding mu which serializes
-goroutines and can leak bodies; update the code around variables
-reqStart/resp/err/endpoint to use a custom http.Client with a reasonable
-Timeout, after the http call first check err and only then inspect resp, always
-ensure resp.Body is closed (e.g., defer resp.Body.Close() immediately after
-verifying resp != nil) and move io.Copy(io.Discard, resp.Body) and
-resp.Body.Close() outside the mu.Lock()/Unlock() critical section so you only
-update counters (totalRequests, errors, totalLatency) while holding mu.
+In `@backend-go/main.go` around lines 69 - 87, Remove the unnecessary credential
+header in the CORS middleware: in the anonymous Gin middleware (the func(c
+*gin.Context) that sets response headers) delete the
+c.Writer.Header().Set("Access-Control-Allow-Credentials", "true") call (or guard
+it behind an explicit config flag) so the middleware no longer emits
+Access-Control-Allow-Credentials when the frontend does not use credentials;
+keep the origin reflection and Vary header as-is.

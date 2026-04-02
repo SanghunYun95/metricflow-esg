@@ -63,19 +63,32 @@ func main() {
 	if err == nil {
 		defer compMappingFile.Close()
 		cReader := csv.NewReader(compMappingFile)
-		cHeader, _ := cReader.Read()
-		cHMap := make(map[string]int)
-		for i, name := range cHeader {
-			cHMap[name] = i
-		}
-		for {
-			cRec, cErr := cReader.Read()
-			if cErr != nil {
-				break
+		cHeader, err := cReader.Read()
+		if err != nil {
+			log.Printf("Warning: failed to read sp500_components.csv header: %v", err)
+		} else {
+			cHMap := make(map[string]int)
+			for i, name := range cHeader {
+				cHMap[name] = i
 			}
-			t := strings.TrimSpace(cRec[cHMap["Symbol"]])
-			compNameMap[t] = cRec[cHMap["Security"]]
-			compSectorMap[t] = cRec[cHMap["GICS Sector"]]
+			for {
+				cRec, cErr := cReader.Read()
+				if cErr != nil {
+					break
+				}
+				// 필수 컬럼 존재 여부 체크
+				if symbolIdx, ok := cHMap["Symbol"]; ok {
+					t := strings.TrimSpace(cRec[symbolIdx])
+					if t != "" {
+						if secIdx, ok := cHMap["Security"]; ok {
+							compNameMap[t] = cRec[secIdx]
+						}
+						if sectorIdx, ok := cHMap["GICS Sector"]; ok {
+							compSectorMap[t] = cRec[sectorIdx]
+						}
+					}
+				}
+			}
 		}
 	} else {
 		log.Printf("Warning: sp500_components.csv not found, using defaults: %v", err)
@@ -159,6 +172,7 @@ func main() {
 			break
 		}
 		if err != nil {
+			log.Printf("Warning: skipping row due to read error: %v", err)
 			continue
 		}
 
@@ -203,10 +217,7 @@ func generateMetrics(db *gorm.DB, companyID uint) error {
 	for i := 0; i < 60; i++ {
 		year := 2024 - (59-i)/12
 		month := 1 + (i % 12)
-		yearMonth := strconv.Itoa(year) + "-" + strconv.FormatInt(int64(month), 10)
-		if month < 10 {
-			yearMonth = strconv.Itoa(year) + "-0" + strconv.FormatInt(int64(month), 10)
-		}
+		yearMonth := fmt.Sprintf("%d-%02d", year, month)
 
 		currentE = clamp(currentE + rand.NormFloat64())
 		currentS = clamp(currentS + rand.NormFloat64())
