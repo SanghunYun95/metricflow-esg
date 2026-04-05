@@ -214,14 +214,13 @@ func refreshCache(c *gin.Context) {
 	// Go의 강점: 고루틴을 활용한 논블로킹 백그라운드 처리
 	go func() {
 		defer isRefreshing.Store(false)
-		log.Println("Background cache refresh started...")
-		
+		// Cache Queries (shared between DB types)
+		sectorQuery := `SELECT c.industry AS sector, AVG(m.e_score) AS avg_e_score, AVG(m.s_score) AS avg_s_score, AVG(m.g_score) AS avg_g_score, AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS avg_total_score FROM companies c JOIN esg_metrics m ON c.id = m.company_id WHERE c.industry IS NOT NULL AND c.industry != 'Unknown' GROUP BY c.industry`
+		topQuery := `SELECT c.ticker, c.security_name, c.industry AS sector, AVG(m.e_score) AS e_score, AVG(m.s_score) AS s_score, AVG(m.g_score) AS g_score, AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS total_score FROM companies c JOIN esg_metrics m ON c.id = m.company_id GROUP BY c.ticker, c.security_name, c.industry`
+
 		dialect := db.Dialector.Name()
 		if dialect == "postgres" {
-			sectorQuery := `SELECT c.industry AS sector, AVG(m.e_score) AS avg_e_score, AVG(m.s_score) AS avg_s_score, AVG(m.g_score) AS avg_g_score, AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS avg_total_score FROM companies c JOIN esg_metrics m ON c.id = m.company_id WHERE c.industry IS NOT NULL AND c.industry != 'Unknown' GROUP BY c.industry`
-			topQuery := `SELECT c.ticker, c.security_name, c.industry AS sector, AVG(m.e_score) AS e_score, AVG(m.s_score) AS s_score, AVG(m.g_score) AS g_score, AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS total_score FROM companies c JOIN esg_metrics m ON c.id = m.company_id GROUP BY c.ticker, c.security_name, c.industry`
-
-			// Postgres: 만약 View가 존재하지 않으면 생성, 존재하면 REFRESH (idempotent)
+			// Postgres: Re-create or Refresh Materialized Views
 			if err := db.Exec("REFRESH MATERIALIZED VIEW mv_esg_summary_sector").Error; err != nil {
 				log.Println("Warning: mv_esg_summary_sector refresh failed, trying to create:", err)
 				if err := db.Exec("CREATE MATERIALIZED VIEW mv_esg_summary_sector AS " + sectorQuery).Error; err != nil {
@@ -235,31 +234,35 @@ func refreshCache(c *gin.Context) {
 				}
 			}
 		} else {
-			// SQLite: 트랜잭션을 사용한 원자적 테이블 교체
-			log.Println("Rebuilding cache tables for SQLite...")
-			sectorQuery := `SELECT c.industry AS sector, AVG(m.e_score) AS e_score, AVG(m.s_score) AS s_score, AVG(m.g_score) AS g_score 
-			                FROM companies c JOIN esg_metrics m ON c.id = m.company_id 
-			                WHERE c.industry IS NOT NULL AND c.industry != 'Unknown' GROUP BY c.industry`
-			topQuery := `SELECT c.ticker, c.security_name, c.industry AS sector, 
-			                    AVG(m.e_score) AS e_score, AVG(m.s_score) AS s_score, AVG(m.g_score) AS g_score, 
-			                    AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS total_score 
-			             FROM companies c JOIN esg_metrics m ON c.id = m.company_id GROUP BY c.ticker, c.security_name, c.industry`
-
+			// SQLite: Atomic table swap using RENAME (Zero-downtime simulation)
+			log.Println("Rebuilding cache tables for SQLite using RENAME strategy...")
+			
 			err := db.Transaction(func(tx *gorm.DB) error {
+				// 1. Create temporary tables
+				tx.Exec("DROP TABLE IF EXISTS mv_esg_summary_sector_new")
+				if err := tx.Exec("CREATE TABLE mv_esg_summary_sector_new AS " + sectorQuery).Error; err != nil {
+					return err
+				}
+				tx.Exec("DROP TABLE IF EXISTS mv_top_companies_new")
+				if err := tx.Exec("CREATE TABLE mv_top_companies_new AS " + topQuery).Error; err != nil {
+					return err
+				}
+
+				// 2. Atomically swap (Drop old & Rename new)
 				tx.Exec("DROP TABLE IF EXISTS mv_esg_summary_sector")
-				if err := tx.Exec("CREATE TABLE mv_esg_summary_sector AS " + sectorQuery).Error; err != nil {
+				if err := tx.Exec("ALTER TABLE mv_esg_summary_sector_new RENAME TO mv_esg_summary_sector").Error; err != nil {
 					return err
 				}
 				tx.Exec("DROP TABLE IF EXISTS mv_top_companies")
-				if err := tx.Exec("CREATE TABLE mv_top_companies AS " + topQuery).Error; err != nil {
+				if err := tx.Exec("ALTER TABLE mv_top_companies_new RENAME TO mv_top_companies").Error; err != nil {
 					return err
 				}
 				return nil
 			})
 			if err != nil {
-				log.Printf("Failed to rebuild SQLite cache tables: %v", err)
+				log.Printf("Failed to swap SQLite cache tables: %v", err)
 			} else {
-				log.Println("SQLite cache tables recreated.")
+				log.Println("SQLite cache tables swapped successfully.")
 			}
 		}
 		log.Println("Background cache refresh completed.")

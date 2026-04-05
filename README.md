@@ -155,7 +155,7 @@ Repeatedly running `JOIN` and `GROUP BY` aggregations on massive datasets causes
 1. **PostgreSQL (Production & Recommended):**
     Utilizes the officially supported `MATERIALIZED VIEW` syntax. Heavy aggregation results are physically stored on disk as a table. Queries no longer scan the original tables, reading only the pre-computed 'single view table', guaranteeing extremely fast retrieval speeds even for hundreds of millions of rows.
 2. **SQLite (Local Benchmark Environment):**
-  **Result:** Large-scale 3M traffic queries were slashed by 99.7% from tens of seconds down to just 7ms (0.007 sec), successfully building a zero-latency ultra-fast dashboard suitable for enterprise B2B environments.
+  **Result:** Large-scale 3M traffic queries were slashed by 99.7% from tens of seconds down to just **5.12ms (0.005 sec)** using Go's optimized runtime and pre-computed cache tables.
 3. **Server Resource Optimization via Go (Infrastructure Efficiency)**
    Ported the core Read API and data ingestion pipeline to Go (Gin/GORM) to overcome Python's GIL limitations and runtime overhead. Achieved a 3.7x increase in throughput and a 87% reduction in memory usage through Goroutine-based asynchronous cache refreshing and worker pool-based parallel data ingestion.
 
