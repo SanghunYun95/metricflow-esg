@@ -53,20 +53,20 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// SQLite 커넥션 설정 (동시 쓰기 잠금 방지)
-	sqlDB, _ := db.DB()
+	// SQLite 성능 향상 (일회성 인제스천에 최적화된 MEMORY 모드 사용)
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatal("Failed to get underlying DB connection:", err)
+	}
+
 	if strings.HasPrefix(dsn, "sqlite") || dsn == "" {
 		sqlDB.SetMaxOpenConns(1)
 		db.Exec("PRAGMA synchronous = OFF")
-		db.Exec("PRAGMA journal_mode = WAL") // 멀티 프로세스/스레드 호환성 향상
+		db.Exec("PRAGMA journal_mode = MEMORY") // 인제스천 속도 최적화
 	}
 
-	// SQLite 성능 향상 (SQLite인 경우에만 PRAGMA 실행)
-	if strings.HasPrefix(dsn, "sqlite") || dsn == "" {
-		db.Exec("PRAGMA synchronous = OFF") 
-		db.Exec("PRAGMA journal_mode = MEMORY")
-	}
-
+	// ⚠️ 주의: 기존 데이터를 삭제하고 새로 생성합니다. 
+	// 프로덕션 환경이 아닌 테스트/초기 세팅 환경에서만 사용하세요.
 	if err := db.Migrator().DropTable(&models.Company{}, &models.ESGMetric{}); err != nil {
 		log.Fatal(err)
 	}
@@ -146,12 +146,18 @@ func main() {
 func loadBaseCompanies(path string) []models.Company {
 	file, err := os.Open(path)
 	if err != nil {
+		log.Printf("Warning: Base company file not found at %s. Skipping expansion.", path)
 		return nil
 	}
 	defer file.Close()
 
 	reader := csv.NewReader(file)
-	header, _ := reader.Read()
+	header, err := reader.Read()
+	if err != nil {
+		log.Printf("Failed to read CSV header: %v", err)
+		return nil
+	}
+
 	hMap := make(map[string]int)
 	for i, n := range header {
 		hMap[n] = i
@@ -163,10 +169,25 @@ func loadBaseCompanies(path string) []models.Company {
 		if err == io.EOF {
 			break
 		}
+		if err != nil {
+			log.Printf("CSV read error: %v. Skipping record.", err)
+			continue
+		}
+
+		// 헤더 인덱스 유효성 검사
+		symbolIdx, hasSymbol := hMap["Symbol"]
+		securityIdx, hasSecurity := hMap["Security"]
+		sectorIdx, hasSector := hMap["GICS Sector"]
+
+		if !hasSymbol || !hasSecurity || !hasSector {
+			log.Printf("Missing required columns in CSV (Symbol, Security, GICS Sector). Check your CSV format.")
+			return nil
+		}
+
 		list = append(list, models.Company{
-			Ticker:       rec[hMap["Symbol"]],
-			SecurityName: rec[hMap["Security"]],
-			Industry:     rec[hMap["GICS Sector"]],
+			Ticker:       rec[symbolIdx],
+			SecurityName: rec[securityIdx],
+			Industry:     rec[sectorIdx],
 		})
 	}
 	return list

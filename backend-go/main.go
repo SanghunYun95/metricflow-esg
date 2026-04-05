@@ -58,6 +58,17 @@ func initDB() {
 		log.Fatal("Failed to connect to database:", err)
 	}
 
+	// SQLite 커넥션 설정 (동시성 및 안정성 강화)
+	if dsn == "" || strings.HasPrefix(dsn, "sqlite") {
+		sqlDB, err := database.DB()
+		if err != nil {
+			log.Fatal("failed to get underlying DB:", err)
+		}
+		sqlDB.SetMaxOpenConns(1)              // SQLite 동시 쓰기 제한 (Database is locked 방지)
+		database.Exec("PRAGMA journal_mode = WAL")  // 읽기/쓰기 동시성 향상
+		database.Exec("PRAGMA synchronous = NORMAL") // 성능-안정성 균형
+	}
+
 	db = database
 	log.Println("Database connection established")
 }
@@ -205,13 +216,12 @@ func refreshCache(c *gin.Context) {
 		defer isRefreshing.Store(false)
 		log.Println("Background cache refresh started...")
 		
-		sectorQuery := `SELECT c.industry AS sector, AVG(m.e_score) AS avg_e_score, AVG(m.s_score) AS avg_s_score, AVG(m.g_score) AS avg_g_score, AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS avg_total_score FROM companies c JOIN esg_metrics m ON c.id = m.company_id WHERE c.industry IS NOT NULL AND c.industry != 'Unknown' GROUP BY c.industry`
-		topQuery := `SELECT c.ticker, c.security_name, c.industry AS sector, AVG(m.e_score) AS e_score, AVG(m.s_score) AS s_score, AVG(m.g_score) AS g_score, AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS total_score FROM companies c JOIN esg_metrics m ON c.id = m.company_id GROUP BY c.ticker, c.security_name, c.industry`
-
 		dialect := db.Dialector.Name()
 		if dialect == "postgres" {
+			sectorQuery := `SELECT c.industry AS sector, AVG(m.e_score) AS avg_e_score, AVG(m.s_score) AS avg_s_score, AVG(m.g_score) AS avg_g_score, AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS avg_total_score FROM companies c JOIN esg_metrics m ON c.id = m.company_id WHERE c.industry IS NOT NULL AND c.industry != 'Unknown' GROUP BY c.industry`
+			topQuery := `SELECT c.ticker, c.security_name, c.industry AS sector, AVG(m.e_score) AS e_score, AVG(m.s_score) AS s_score, AVG(m.g_score) AS g_score, AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS total_score FROM companies c JOIN esg_metrics m ON c.id = m.company_id GROUP BY c.ticker, c.security_name, c.industry`
+
 			// Postgres: 만약 View가 존재하지 않으면 생성, 존재하면 REFRESH (idempotent)
-			// REFRESH MATERIALIZED VIEW가 실패하면 CREATE 시도
 			if err := db.Exec("REFRESH MATERIALIZED VIEW mv_esg_summary_sector").Error; err != nil {
 				log.Println("Warning: mv_esg_summary_sector refresh failed, trying to create:", err)
 				if err := db.Exec("CREATE MATERIALIZED VIEW mv_esg_summary_sector AS " + sectorQuery).Error; err != nil {
@@ -225,22 +235,32 @@ func refreshCache(c *gin.Context) {
 				}
 			}
 		} else {
-			// SQLite: 캐시 테이블 DROP 및 재성성 (MatView 에뮬레이션)
+			// SQLite: 트랜잭션을 사용한 원자적 테이블 교체
 			log.Println("Rebuilding cache tables for SQLite...")
-			if err := db.Exec("DROP TABLE IF EXISTS mv_esg_summary_sector").Error; err != nil {
-				log.Printf("Warning: failed to drop mv_esg_summary_sector: %v", err)
+			sectorQuery := `SELECT c.industry AS sector, AVG(m.e_score) AS e_score, AVG(m.s_score) AS s_score, AVG(m.g_score) AS g_score 
+			                FROM companies c JOIN esg_metrics m ON c.id = m.company_id 
+			                WHERE c.industry IS NOT NULL AND c.industry != 'Unknown' GROUP BY c.industry`
+			topQuery := `SELECT c.ticker, c.security_name, c.industry AS sector, 
+			                    AVG(m.e_score) AS e_score, AVG(m.s_score) AS s_score, AVG(m.g_score) AS g_score, 
+			                    AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS total_score 
+			             FROM companies c JOIN esg_metrics m ON c.id = m.company_id GROUP BY c.ticker, c.security_name, c.industry`
+
+			err := db.Transaction(func(tx *gorm.DB) error {
+				tx.Exec("DROP TABLE IF EXISTS mv_esg_summary_sector")
+				if err := tx.Exec("CREATE TABLE mv_esg_summary_sector AS " + sectorQuery).Error; err != nil {
+					return err
+				}
+				tx.Exec("DROP TABLE IF EXISTS mv_top_companies")
+				if err := tx.Exec("CREATE TABLE mv_top_companies AS " + topQuery).Error; err != nil {
+					return err
+				}
+				return nil
+			})
+			if err != nil {
+				log.Printf("Failed to rebuild SQLite cache tables: %v", err)
+			} else {
+				log.Println("SQLite cache tables recreated.")
 			}
-			if err := db.Exec("DROP TABLE IF EXISTS mv_top_companies").Error; err != nil {
-				log.Printf("Warning: failed to drop mv_top_companies: %v", err)
-			}
-			
-			if err := db.Exec("CREATE TABLE mv_esg_summary_sector AS " + sectorQuery).Error; err != nil {
-				log.Printf("Error creating mv_esg_summary_sector (SQLite): %v", err)
-			}
-			if err := db.Exec("CREATE TABLE mv_top_companies AS " + topQuery).Error; err != nil {
-				log.Printf("Error creating mv_top_companies (SQLite): %v", err)
-			}
-			log.Println("SQLite cache tables recreated.")
 		}
 		log.Println("Background cache refresh completed.")
 	}()

@@ -9,6 +9,11 @@
 
 <video src="https://github.com/user-attachments/assets/ca395a60-4186-48ab-8748-28f1b7b4e760" autoplay loop muted playsinline width="100%">
 </video>
+---
+
+### ⚠️ Important Notice
+The following tools are designed for development and testing environments:
+- **`ingest_3m.go`**: This script **DROPS EXISTING TABLES** (`companies` and `esg_metrics`) before recreating them with 3 million records. **DO NOT RUN THIS IN PRODUCTION.**
 
 ---
 
@@ -138,7 +143,10 @@ Tested performance limits of aggregation queries (GROUP BY, ORDER BY) in a local
 | Data Scope | Cold Start (Initial Load) | 2nd Request (Materialized View / Cache Table) | 3rd Request (Hot Hit) | Note |
 | :--- | :--- | :--- | :--- | :--- |
 | **50k Rows** (Current) | 1,213 ms | 56.28 ms | 17.69 ms | Current Live Service Level |
-| **3M Rows** | 2,136.82 ms | **12.29 ms** | **7.35 ms** | Sub-10ms lightning-fast response achieved |
+| **3M Rows (Python)** | 2,136.82 ms | **12.29 ms** | **7.35 ms** | Python performance limit |
+| **3M Rows (Go)** | 1,353.12 ms | **11.45 ms** | **5.12 ms** | Stable processing at 1,300+ RPS |
+
+> **Note:** Thanks to Go's lightweight runtime and concurrency model, even with a massive dataset of 3 million records, it maintains an average response time of 36ms and stable performance of over 1,300 RPS during 50 concurrent connections.
 
 💡 **Materialized View Strategy**
  
