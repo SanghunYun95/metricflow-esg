@@ -9,6 +9,7 @@
 
 <video src="https://github.com/user-attachments/assets/ca395a60-4186-48ab-8748-28f1b7b4e760" autoplay loop muted playsinline width="100%">
 </video>
+
 ---
 
 ## 📝 TODO
@@ -99,17 +100,12 @@ go run main.go
 #### 🛠 3M 데이터 적재 (3M Data Ingestion - Optional)
 이 과정은 스트레스 테스트를 위해 300만 건의 데이터를 생성하고 적재하고자 할 때만 필요합니다.
 
-> ⚠️ **주의사항 (Important Notice)**
+> ⚠️ **주의사항**
 > 다음 도구들은 개발 및 테스트 환경용으로 설계되었습니다:
-> - **`ingest_3m.go`**: 이 스크립트는 고속 인제스천을 위해 **기존 테이블(`companies`, `esg_metrics`)을 삭제(DROP)**하고 SQLite의 **PRAGMA 설정**을 변경합니다.
+> - **`ingest_3m.go`**: 이 스크립트는 고속 인제스천을 위해 기존 테이블(`companies`, `esg_metrics`)을 삭제(DROP)하고 SQLite의 **PRAGMA 설정**을 변경합니다.
 >   - **사전 요구사항:** 인제스천 스크립트가 실행 중인 서버와 **동일한 SQLite DB 파일**에 접근하는 경우, 반드시 API 서버를 **완전히 종료**해야 합니다. 기본 설정인 별도 DB(`sqlite:///./esg_3m.db`)를 사용하는 경우에는 종료할 필요가 없습니다.
 >   - **보안:** 절대로 운영 환경이나 공유 데이터베이스에서 실행하지 마세요. 전용 로컬 SQLite 파일만 사용해야 합니다.
 >   - **권장사항:** 실행 전에 데이터베이스 파일을 백업하고, IDE의 DB 브라우저 등 다른 프로세스가 파일을 점유하고 있지 않은지 확인하세요.
-> 
-> - **`ingest_3m.go`**: This script **DROPS EXISTING TABLES** (`companies` and `esg_metrics`) and modifies SQLite **PRAGMA settings** for high-speed ingestion. 
->   - **Prerequisite:** The API server must be **FULLY STOPPED** ONLY when the ingest script accesses the **same SQLite DB file** as the running server. If using the default separate DB (`sqlite:///./esg_3m.db`), stopping is not required.
->   - **Security:** NEVER run this against a production or shared database. Use a dedicated local SQLite file only.
->   - **Recommendation:** Back up your database file before execution and verify that no other process (like an IDE's DB browser) is holding the file.
 
 ```bash
 # 300만 건 데이터 생성 및 적재 실행
@@ -207,6 +203,13 @@ uv run python main.py
 cd ../backend-go
 go run main.go
 ```
+
+#### 🛠 3M Data Ingestion - Optional
+> ⚠️ **Important Notice**
+> - **`ingest_3m.go`**: This script DROPS EXISTING TABLES (`companies` and `esg_metrics`) and modifies SQLite **PRAGMA settings** for high-speed ingestion. 
+>   - **Prerequisite:** The API server must be **FULLY STOPPED** ONLY when the ingest script accesses the **same SQLite DB file** as the running server. If using the default separate DB (`sqlite:///./esg_3m.db`), stopping is not required.
+>   - **Security:** NEVER run this against a production or shared database. Use a dedicated local SQLite file only.
+>   - **Recommendation:** Back up your database file before execution and verify that no other process (like an IDE's DB browser) is holding the file.
 
 #### Frontend Setup
 ```bash
