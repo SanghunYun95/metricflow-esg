@@ -11,15 +11,6 @@
 </video>
 ---
 
-## ⚠️ Important Notice
-The following tools are designed for development and testing environments:
-- **`ingest_3m.go`**: This script **DROPS EXISTING TABLES** (`companies` and `esg_metrics`) and modifies SQLite **PRAGMA settings** for high-speed ingestion. 
-  - **Prerequisite:** The API server must be **FULLY STOPPED** ONLY when the ingest script accesses the **same SQLite DB file** as the running server. If using the default separate DB (`sqlite:///./esg_3m.db`), stopping is not required.
-  - **Security:** NEVER run this against a production or shared database. Use a **dedicated local SQLite file** only.
-  - **Recommendation:** Back up your database file before execution and verify that no other process (like an IDE's DB browser) is holding the file.
-
----
-
 ## 📝 TODO
 
 - [x] **Go 언어로 변환**: 현재 Python(FastAPI) 기반인 백엔드를 Go 언어로 포팅하여 성능 최적화 및 동시성 처리 강화 (Goroutine & Worker Pool 적용)
@@ -40,8 +31,8 @@ The following tools are designed for development and testing environments:
 2. **백엔드 집계 쿼리 튜닝 (API 응답 속도 단축)**
    FastAPI 백엔드에서 모든 데이터를 메모리에 올려 계산하는 대신, SQLAlchemy의 `func.avg`와 `GROUP BY`를 활용한 데이터베이스 레벨의 집계 쿼리로 튜닝하여 메모리 초과(OOM)를 방지하고 대시보드 로딩 지연을 해결함.
 
-### 📈 대용량 트래픽 스트레스 테스트 및 튜닝 지표 (Stress Test Benchmark)
-실제 B2B 환경(대규모 데이터)을 가정하여 로컬 환경(SQLite)에서 동일한 집계 쿼리(GROUP BY, ORDER BY)의 성능 한계를 테스트했습니다.
+### 📈 300만 건 대용량 스트레스 테스트 지표 (Stress Test Analysis)
+실제 B2B 엔터프라이즈 환경을 가정하여, 로컬 환경(SQLite)에서 데이터 집계 쿼리(GROUP BY, ORDER BY)의 성능 한계를 테스트한 지표입니다.
 
 | 데이터 규모 | 콜드 스타트 (초기 로드) | 2회차 요청 (Materialized View 캐시) | 3회차 요청 (핫 히트) | 비고 |
 | :--- | :--- | :--- | :--- | :--- |
@@ -63,8 +54,8 @@ The following tools are designed for development and testing environments:
 4. **사용자 경험(UX) 및 프론트엔드 렌더링 최적화**
    Next.js와 React-Query를 결합하여 데이터 패칭(Fetching) 상태를 관리하고, 불필요한 리렌더링을 억제하여 B2B 환경에 적합한 끊김 없는 대용량 데이터 시각화(Recharts) 대시보드와 모던한 Tailwind CSS 다크모드 UI를 구현함.
 
-### 📊 Python vs Go 성능 비교 (Backend Benchmark)
-실제 로컬 환경(1,000건 샘플 데이터)에서 50명의 동시 사용자가 10초간 요청을 보냈을 때의 실측 지표입니다.
+### 📊 Python vs Go 런타임 성능 비교 (Micro-Benchmark)
+실제 로컬 환경(1,000건 샘플 데이터)에서 50명의 동시 사용자가 10초간 요청을 보냈을 때의 런타임 처리 효율 지표입니다.
 
 | 지표 (Benchmark) | Python (FastAPI/Uvicorn) | **Go (Gin/Goroutine)** | **개선율** |
 | :--- | :--- | :--- | :--- |
@@ -105,6 +96,27 @@ cd ../backend-go
 go run main.go
 ```
 
+#### 🛠 3M 데이터 적재 (3M Data Ingestion - Optional)
+이 과정은 스트레스 테스트를 위해 300만 건의 데이터를 생성하고 적재하고자 할 때만 필요합니다.
+
+> ⚠️ **주의사항 (Important Notice)**
+> 다음 도구들은 개발 및 테스트 환경용으로 설계되었습니다:
+> - **`ingest_3m.go`**: 이 스크립트는 고속 인제스천을 위해 **기존 테이블(`companies`, `esg_metrics`)을 삭제(DROP)**하고 SQLite의 **PRAGMA 설정**을 변경합니다.
+>   - **사전 요구사항:** 인제스천 스크립트가 실행 중인 서버와 **동일한 SQLite DB 파일**에 접근하는 경우, 반드시 API 서버를 **완전히 종료**해야 합니다. 기본 설정인 별도 DB(`sqlite:///./esg_3m.db`)를 사용하는 경우에는 종료할 필요가 없습니다.
+>   - **보안:** 절대로 운영 환경이나 공유 데이터베이스에서 실행하지 마세요. 전용 로컬 SQLite 파일만 사용해야 합니다.
+>   - **권장사항:** 실행 전에 데이터베이스 파일을 백업하고, IDE의 DB 브라우저 등 다른 프로세스가 파일을 점유하고 있지 않은지 확인하세요.
+> 
+> - **`ingest_3m.go`**: This script **DROPS EXISTING TABLES** (`companies` and `esg_metrics`) and modifies SQLite **PRAGMA settings** for high-speed ingestion. 
+>   - **Prerequisite:** The API server must be **FULLY STOPPED** ONLY when the ingest script accesses the **same SQLite DB file** as the running server. If using the default separate DB (`sqlite:///./esg_3m.db`), stopping is not required.
+>   - **Security:** NEVER run this against a production or shared database. Use a dedicated local SQLite file only.
+>   - **Recommendation:** Back up your database file before execution and verify that no other process (like an IDE's DB browser) is holding the file.
+
+```bash
+# 300만 건 데이터 생성 및 적재 실행
+cd backend-go/ingest
+go run ingest_3m.go
+```
+
 #### Frontend 설정
 ```bash
 # 1. 프론트엔드 폴더로 이동
@@ -140,7 +152,7 @@ This project is a dashboard that analyzes and visualizes ESG data for S&P 500 co
 2. **Backend Aggregation Query Tuning (API Latency Reduction)**
    Rather than loading all data into memory for calculation in the FastAPI backend, tuned aggregation queries at the database level using SQLAlchemy's `func.avg` and `GROUP BY`. This prevented Out-Of-Memory (OOM) errors and resolved dashboard loading delays.
 
-### 📈 Large-scale Traffic Stress Test & Tuning Metrics
+### 📈 3M Records Large-Scale Stress Test (Stress Test Analysis)
 Tested performance limits of aggregation queries (GROUP BY, ORDER BY) in a local environment (SQLite) to simulate actual B2B environments.
 
 | Data Scope | Cold Start (Initial Load) | 2nd Request (Materialized View / Cache Table) | 3rd Request (Hot Hit) | Note |
@@ -162,8 +174,8 @@ Repeatedly running `JOIN` and `GROUP BY` aggregations on massive datasets causes
 3. **Server Resource Optimization via Go (Infrastructure Efficiency)**
    Ported the core Read API and data ingestion pipeline to Go (Gin/GORM) to overcome Python's GIL limitations and runtime overhead. Achieved a 3.7x increase in throughput and a 87% reduction in memory usage through Goroutine-based asynchronous cache refreshing and worker pool-based parallel data ingestion.
 
-### 📊 Python vs Go Performance Comparison (1,000 Rows Sample)
-Actual metrics measured in a local environment with 50 concurrent users over 10 seconds.
+### 📊 Python vs Go Runtime Performance (Micro-Benchmark)
+Runtime efficiency measured in a local environment with 1,000 sample records and 50 concurrent users over 10 seconds.
 
 | Metric (Benchmark) | Python (FastAPI/Uvicorn) | **Go (Gin/Goroutine)** | **Improvement** |
 | :--- | :--- | :--- | :--- |
