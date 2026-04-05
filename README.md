@@ -11,10 +11,10 @@
 </video>
 ---
 
-### ⚠️ Important Notice
+## ⚠️ Important Notice
 The following tools are designed for development and testing environments:
 - **`ingest_3m.go`**: This script **DROPS EXISTING TABLES** (`companies` and `esg_metrics`) and modifies SQLite **PRAGMA settings** for high-speed ingestion. 
-  - **Prerequisite:** The API server must be **FULLY STOPPED** before running this script to avoid database locking issues.
+  - **Prerequisite:** The API server must be **FULLY STOPPED** ONLY when the ingest script accesses the **same SQLite DB file** as the running server. If using the default separate DB (`sqlite:///./esg_3m.db`), stopping is not required.
   - **Security:** NEVER run this against a production or shared database. Use a **dedicated local SQLite file** only.
   - **Recommendation:** Back up your database file before execution and verify that no other process (like an IDE's DB browser) is holding the file.
 
