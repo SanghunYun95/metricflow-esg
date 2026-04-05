@@ -64,9 +64,18 @@ func initDB() {
 		if err != nil {
 			log.Fatal("failed to get underlying DB:", err)
 		}
-		sqlDB.SetMaxOpenConns(1)              // SQLite 동시 쓰기 제한 (Database is locked 방지)
-		database.Exec("PRAGMA journal_mode = WAL")  // 읽기/쓰기 동시성 향상
-		database.Exec("PRAGMA synchronous = NORMAL") // 성능-안정성 균형
+		
+		// WAL 모드에서는 동시 읽기가 가능하므로 연결 수를 제한하지 않거나 적절히 완화합니다.
+		// 단, 쓰기는 여전히 직렬화가 필요할 수 있으나 WAL이 이를 어느 정도 관리합니다.
+		sqlDB.SetMaxOpenConns(10) 
+		sqlDB.SetMaxIdleConns(5)
+		
+		if err := database.Exec("PRAGMA journal_mode = WAL").Error; err != nil {
+			log.Fatalf("failed to enable SQLite WAL mode: %v", err)
+		}
+		if err := database.Exec("PRAGMA synchronous = NORMAL").Error; err != nil {
+			log.Fatalf("failed to set SQLite synchronous mode: %v", err)
+		}
 	}
 
 	db = database
@@ -239,21 +248,29 @@ func refreshCache(c *gin.Context) {
 			
 			err := db.Transaction(func(tx *gorm.DB) error {
 				// 1. Create temporary tables
-				tx.Exec("DROP TABLE IF EXISTS mv_esg_summary_sector_new")
+				if err := tx.Exec("DROP TABLE IF EXISTS mv_esg_summary_sector_new").Error; err != nil {
+					return err
+				}
 				if err := tx.Exec("CREATE TABLE mv_esg_summary_sector_new AS " + sectorQuery).Error; err != nil {
 					return err
 				}
-				tx.Exec("DROP TABLE IF EXISTS mv_top_companies_new")
+				if err := tx.Exec("DROP TABLE IF EXISTS mv_top_companies_new").Error; err != nil {
+					return err
+				}
 				if err := tx.Exec("CREATE TABLE mv_top_companies_new AS " + topQuery).Error; err != nil {
 					return err
 				}
 
 				// 2. Atomically swap (Drop old & Rename new)
-				tx.Exec("DROP TABLE IF EXISTS mv_esg_summary_sector")
+				if err := tx.Exec("DROP TABLE IF EXISTS mv_esg_summary_sector").Error; err != nil {
+					return err
+				}
 				if err := tx.Exec("ALTER TABLE mv_esg_summary_sector_new RENAME TO mv_esg_summary_sector").Error; err != nil {
 					return err
 				}
-				tx.Exec("DROP TABLE IF EXISTS mv_top_companies")
+				if err := tx.Exec("DROP TABLE IF EXISTS mv_top_companies").Error; err != nil {
+					return err
+				}
 				if err := tx.Exec("ALTER TABLE mv_top_companies_new RENAME TO mv_top_companies").Error; err != nil {
 					return err
 				}

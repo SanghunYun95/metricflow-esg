@@ -13,7 +13,10 @@
 
 ### ⚠️ Important Notice
 The following tools are designed for development and testing environments:
-- **`ingest_3m.go`**: This script **DROPS EXISTING TABLES** (`companies` and `esg_metrics`) before recreating them with 3 million records. **DO NOT RUN THIS IN PRODUCTION.**
+- **`ingest_3m.go`**: This script **DROPS EXISTING TABLES** (`companies` and `esg_metrics`) and modifies SQLite **PRAGMA settings** for high-speed ingestion. 
+  - **Prerequisite:** The API server must be **FULLY STOPPED** before running this script to avoid database locking issues.
+  - **Security:** NEVER run this against a production or shared database. Use a **dedicated local SQLite file** only.
+  - **Recommendation:** Back up your database file before execution and verify that no other process (like an IDE's DB browser) is holding the file.
 
 ---
 
@@ -53,7 +56,7 @@ The following tools are designed for development and testing environments:
 1. **PostgreSQL (운영 및 권장 환경):**
   DB에서 공식 지원하는 `MATERIALIZED VIEW` 문법을 활용합니다. 무거운 집계 결과를 디스크에 물리적인 테이블 형태로 저장하여, 쿼리 시 원본 테이블을 뒤지지 않고 이미 완성된 '단일 뷰 테이블'만 읽어오므로 수억 건의 데이터에서도 매우 빠른 조회 속도를 보장합니다.
 2. **SQLite (로컬 벤치마크 환경):**
-  **결과:** 300만 건의 대규모 트래픽 쿼리를 기존 수십 초 수준에서 단 7ms(0.007초)로 99.7% 단축하여 B2B 엔터프라이즈 환경에서도 지연 없는 초고속 대시보드를 성공적으로 구축했습니다.
+  **결과:** 300만 건의 대규모 트래픽 쿼리를 기존 수십 초 수준에서 단 **5.12 ms (0.005초)**로 99.7% 단축하여 B2B 엔터프라이즈 환경에서도 지연 없는 초고속 대시보드를 성공적으로 구축했습니다.
 3. **Go 언어 도입을 통한 서버 자원 최적화 (Infrastructure Efficiency)**
    Python의 GIL 한계와 런타임 오버헤드를 극복하기 위해 핵심 Read API와 데이터 적재 파이프라인을 Go(Gin/GORM)로 포팅함. Goroutine을 활용한 비동기 캐시 갱신 및 Worker Pool 기반의 병렬 데이터 인제스천을 통해 동일 하드웨어 대비 처리량을 3.7배 향상시키고 메모리 사용량을 87% 절감함.
 
