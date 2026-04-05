@@ -10,9 +10,9 @@ import (
 
 	"github.com/SanghunYun95/metricflow-esg/backend-go/models"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/joho/godotenv"
 	"gorm.io/driver/postgres"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -56,6 +56,26 @@ func initDB() {
 	})
 	if err != nil {
 		log.Fatal("Failed to connect to database:", err)
+	}
+
+	// SQLite 커넥션 설정 (동시성 및 안정성 강화)
+	if dsn == "" || strings.HasPrefix(dsn, "sqlite") {
+		sqlDB, err := database.DB()
+		if err != nil {
+			log.Fatal("failed to get underlying DB:", err)
+		}
+		
+		// WAL 모드에서는 동시 읽기가 가능하므로 연결 수를 제한하지 않거나 적절히 완화합니다.
+		// 단, 쓰기는 여전히 직렬화가 필요할 수 있으나 WAL이 이를 어느 정도 관리합니다.
+		sqlDB.SetMaxOpenConns(10) 
+		sqlDB.SetMaxIdleConns(5)
+		
+		if err := database.Exec("PRAGMA journal_mode = WAL").Error; err != nil {
+			log.Fatalf("failed to enable SQLite WAL mode: %v", err)
+		}
+		if err := database.Exec("PRAGMA synchronous = NORMAL").Error; err != nil {
+			log.Fatalf("failed to set SQLite synchronous mode: %v", err)
+		}
 	}
 
 	db = database
@@ -203,15 +223,13 @@ func refreshCache(c *gin.Context) {
 	// Go의 강점: 고루틴을 활용한 논블로킹 백그라운드 처리
 	go func() {
 		defer isRefreshing.Store(false)
-		log.Println("Background cache refresh started...")
-		
+		// Cache Queries (shared between DB types)
 		sectorQuery := `SELECT c.industry AS sector, AVG(m.e_score) AS avg_e_score, AVG(m.s_score) AS avg_s_score, AVG(m.g_score) AS avg_g_score, AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS avg_total_score FROM companies c JOIN esg_metrics m ON c.id = m.company_id WHERE c.industry IS NOT NULL AND c.industry != 'Unknown' GROUP BY c.industry`
 		topQuery := `SELECT c.ticker, c.security_name, c.industry AS sector, AVG(m.e_score) AS e_score, AVG(m.s_score) AS s_score, AVG(m.g_score) AS g_score, AVG((m.e_score + m.s_score + m.g_score) / 3.0) AS total_score FROM companies c JOIN esg_metrics m ON c.id = m.company_id GROUP BY c.ticker, c.security_name, c.industry`
 
 		dialect := db.Dialector.Name()
 		if dialect == "postgres" {
-			// Postgres: 만약 View가 존재하지 않으면 생성, 존재하면 REFRESH (idempotent)
-			// REFRESH MATERIALIZED VIEW가 실패하면 CREATE 시도
+			// Postgres: Re-create or Refresh Materialized Views
 			if err := db.Exec("REFRESH MATERIALIZED VIEW mv_esg_summary_sector").Error; err != nil {
 				log.Println("Warning: mv_esg_summary_sector refresh failed, trying to create:", err)
 				if err := db.Exec("CREATE MATERIALIZED VIEW mv_esg_summary_sector AS " + sectorQuery).Error; err != nil {
@@ -225,22 +243,44 @@ func refreshCache(c *gin.Context) {
 				}
 			}
 		} else {
-			// SQLite: 캐시 테이블 DROP 및 재성성 (MatView 에뮬레이션)
-			log.Println("Rebuilding cache tables for SQLite...")
-			if err := db.Exec("DROP TABLE IF EXISTS mv_esg_summary_sector").Error; err != nil {
-				log.Printf("Warning: failed to drop mv_esg_summary_sector: %v", err)
-			}
-			if err := db.Exec("DROP TABLE IF EXISTS mv_top_companies").Error; err != nil {
-				log.Printf("Warning: failed to drop mv_top_companies: %v", err)
-			}
+			// SQLite: Atomic table swap using RENAME (Zero-downtime simulation)
+			log.Println("Rebuilding cache tables for SQLite using RENAME strategy...")
 			
-			if err := db.Exec("CREATE TABLE mv_esg_summary_sector AS " + sectorQuery).Error; err != nil {
-				log.Printf("Error creating mv_esg_summary_sector (SQLite): %v", err)
+			err := db.Transaction(func(tx *gorm.DB) error {
+				// 1. Create temporary tables
+				if err := tx.Exec("DROP TABLE IF EXISTS mv_esg_summary_sector_new").Error; err != nil {
+					return err
+				}
+				if err := tx.Exec("CREATE TABLE mv_esg_summary_sector_new AS " + sectorQuery).Error; err != nil {
+					return err
+				}
+				if err := tx.Exec("DROP TABLE IF EXISTS mv_top_companies_new").Error; err != nil {
+					return err
+				}
+				if err := tx.Exec("CREATE TABLE mv_top_companies_new AS " + topQuery).Error; err != nil {
+					return err
+				}
+
+				// 2. Atomically swap (Drop old & Rename new)
+				if err := tx.Exec("DROP TABLE IF EXISTS mv_esg_summary_sector").Error; err != nil {
+					return err
+				}
+				if err := tx.Exec("ALTER TABLE mv_esg_summary_sector_new RENAME TO mv_esg_summary_sector").Error; err != nil {
+					return err
+				}
+				if err := tx.Exec("DROP TABLE IF EXISTS mv_top_companies").Error; err != nil {
+					return err
+				}
+				if err := tx.Exec("ALTER TABLE mv_top_companies_new RENAME TO mv_top_companies").Error; err != nil {
+					return err
+				}
+				return nil
+			})
+			if err != nil {
+				log.Printf("Failed to swap SQLite cache tables: %v", err)
+			} else {
+				log.Println("SQLite cache tables swapped successfully.")
 			}
-			if err := db.Exec("CREATE TABLE mv_top_companies AS " + topQuery).Error; err != nil {
-				log.Printf("Error creating mv_top_companies (SQLite): %v", err)
-			}
-			log.Println("SQLite cache tables recreated.")
 		}
 		log.Println("Background cache refresh completed.")
 	}()
